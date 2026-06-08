@@ -4,7 +4,7 @@ Running log of what's done and what's next. Update at the end of each session.
 
 _Last updated: 2026-06-08_
 
-## Status: working app + standalone exe — v2.1 (Marquee model selector)
+## Status: working app + standalone exe — v2.2 (bud3eij package restructure)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, and a **Marquee** image-editing section (Background Remover) are
@@ -12,12 +12,42 @@ complete and verified — **both from source and in the rebuilt standalone exe**
 v1.1 = PowerPoint + Markdown; v1.2 = bug fixes; v1.3 = YouTube downloads +
 sun/moon toggle; v1.4 = visual redesign (file-type icons, hero Home, table
 Recent); v1.4.5 = animated "Convert Now" button; v2.0 = Marquee / Background
-Remover (rembg); **v2.1 = Marquee Flash/Mid/Omega model selector**.
+Remover (rembg); v2.1 = Marquee Flash/Mid/Omega model selector; **v2.2 = split
+the logic into a `bud3eij/` package (foundation for the image-editing section)**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-08 — v2.2: restructure — split logic into a `bud3eij/` package
+- **Why:** ahead of growing the Marquee image-editing section, `app.py` had reached
+  ~2,290 lines. A single growing file doesn't hurt the *running app* (one exe, same
+  performance — load is the heavy libs, not line count) but raises edit-mistake risk
+  and the cost of each change. Split now, while it's clean.
+- **What moved:** the pure, GUI-free logic from `app.py` into a new package:
+  `bud3eij/formats.py` (format model + helpers + `ConversionError`),
+  `bud3eij/converters.py` (`convert_file` + all converters),
+  `bud3eij/youtube.py` (`download_youtube`), `bud3eij/background.py`
+  (`remove_background` + `BG_MODELS`). `app.py` keeps the GUI, Recent-history store,
+  CLI, and `main()`, and **re-exports** the package functions so `import app;
+  app.<fn>` and the CLI/tests are unaffected. Done by a one-off slice script
+  (`_refactor.py`, deleted after) so code moved verbatim. `app.py`: 2,287 → 1,732
+  lines.
+- **Version bumped to 2.2.** No behaviour/UI change and still **one program, one
+  exe** — but the restructuring is a deliberate foundation improvement for future
+  additions (esp. the growing image-editing section), so it earns a version. The
+  PyInstaller command is unchanged (it follows the static `from bud3eij...` imports
+  and bundles the package automatically).
+- **Verified from source:** all modules compile + `import app` re-exports present;
+  conversions (png→jpg/webp/gif, pdf→md/txt), `remove_background` (RGBA, alpha
+  0/255), GUI smoke (all 7 frames build, Marquee selector intact), and the
+  `--convert`/`--remove-bg` CLI. **Frozen exe rebuilt + re-verified:** `--convert
+  pdf md` → structure-aware Markdown (bud3eij.converters bundled, trap-fix intact),
+  `--remove-bg` → transparent PNG (bud3eij.background + rembg bundled), GUI launches
+  clean. (Build gotcha: a stale running `Bu D3eij.exe` locked the file and the first
+  rebuild silently failed because a `| tail` pipe masked PyInstaller's exit code —
+  killed the process and rebuilt without the pipe; confirmed a fresh exe timestamp.)
 
 ### 2026-06-08 — v2.1: Marquee model selector (Flash / Mid / Omega)
 - **Quality tier selector** added to the Marquee page — a `CTkSegmentedButton`

@@ -5,9 +5,14 @@ Guidance for working on this project across sessions. Keep this file and
 
 ## What this is
 Bu D3eij is a Windows desktop **file converter** (documents, images, audio/video)
-built with **CustomTkinter** + **tkinterdnd2** drag-and-drop. Single-file app
-(`app.py`): conversion logic is plain module-level functions (importable and
-testable without the GUI); the `App` class is a thin GUI layer on top.
+built with **CustomTkinter** + **tkinterdnd2** drag-and-drop. The pure logic lives
+in the **`bud3eij/` package** (`formats`, `converters`, `youtube`, `background`) as
+plain module-level functions (importable and testable without the GUI); **`app.py`**
+is the GUI (`App` class + views), the Recent-history store, the CLI, and the entry
+point, and it **re-exports** the package functions so `app.<fn>` and `import app`
+keep working for headless tests. (It was one big `app.py` through v2.1; the logic
+was split into the package in **v2.2** — same single program and same UI/output,
+reorganized for safe growth before the image-editing section expands.)
 **v2.0** opens a second direction — an image-editing area called **Marquee**;
 its first tool is a **Background Remover** (rembg) that exports a transparent PNG.
 
@@ -86,7 +91,17 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
   (proves bundled modules/data work, not just startup). For the Background
   Remover this is the key check — it exercises the rembg/onnxruntime bundle.
 
-## Architecture / key code (`app.py`)
+## Architecture / key code
+**Where things live (after the v2.2 package split):** the pure logic is in the
+`bud3eij/` package — `formats.py` (format model, helpers, `ConversionError`),
+`converters.py` (`convert_file` + every document/image/AV converter),
+`youtube.py` (`download_youtube`), `background.py` (`remove_background` +
+`BG_MODELS`). `app.py` holds the GUI (`App`, `GradientButton`, palette/icons),
+the Recent-history store (`load_history`/`save_history`), the CLI (`_run_cli`),
+and `main()`, and it re-exports the package functions (so `app.convert_file`,
+`app.remove_background`, etc. still resolve). Converters still **import heavy deps
+lazily** inside each function — keep that. The bullets below describe behaviour and
+still apply; only the file a function lives in changed.
 - **Format model:** `IMAGE_EXTS`/`DOC_EXTS`/`PRESENTATION_EXTS`/`AV_EXTS`, and
   `CONVERSIONS` (input ext → list of valid targets). `md` is an **output-only**
   format (it has no `CONVERSIONS` key). `compatible_targets()` drives the UI's
@@ -241,7 +256,14 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
 
 ## Layout
 ```
-app.py            GUI + converters + CLI (single source file)
+app.py            GUI (App + views) + Recent-history store + CLI + entry point;
+                  re-exports the bud3eij functions for headless use
+bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
+  __init__.py
+  formats.py      format model, helpers, ConversionError
+  converters.py   convert_file + all document/image/AV converters
+  youtube.py      download_youtube (yt-dlp)
+  background.py   remove_background + BG_MODELS (Marquee)
 requirements.txt  runtime deps (pyinstaller is dev-only, installed separately)
 README.md         user-facing docs
 CLAUDE.md         this file
