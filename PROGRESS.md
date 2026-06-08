@@ -4,20 +4,45 @@ Running log of what's done and what's next. Update at the end of each session.
 
 _Last updated: 2026-06-08_
 
-## Status: working app + standalone exe — v2.0 (Marquee)
+## Status: working app + standalone exe — v2.1 (Marquee model selector)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
-downloads, and now a **Marquee** image-editing section (Background Remover) are
+downloads, and a **Marquee** image-editing section (Background Remover) are
 complete and verified — **both from source and in the rebuilt standalone exe**.
 v1.1 = PowerPoint + Markdown; v1.2 = bug fixes; v1.3 = YouTube downloads +
 sun/moon toggle; v1.4 = visual redesign (file-type icons, hero Home, table
-Recent); v1.4.5 = animated "Convert Now" button; **v2.0 = Marquee / Background
-Remover (rembg)**.
+Recent); v1.4.5 = animated "Convert Now" button; v2.0 = Marquee / Background
+Remover (rembg); **v2.1 = Marquee Flash/Mid/Omega model selector**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-08 — v2.1: Marquee model selector (Flash / Mid / Omega)
+- **Quality tier selector** added to the Marquee page — a `CTkSegmentedButton`
+  (Flash / Mid / Omega) with a live caption, styled like the YouTube format
+  toggle. Tiers map via the new `BG_MODELS` constant to rembg models:
+  **Flash** = `u2netp` (fastest, ~4.7 MB), **Mid** *(default)* =
+  `isnet-general-use` (balanced — replaces the v2.0 `u2net` default with a
+  moderately-better model), **Omega** = `birefnet-general` (max precision; larger
+  first-run download + slower inference).
+- `remove_background` gained a `model` arg (default `isnet-general-use`); sessions
+  are now cached **per model** in `_REMBG_SESSIONS` (was a single
+  `_REMBG_SESSION`). The GUI passes the chosen tier's model through
+  `on_marquee_remove` → `_marquee_worker` → `remove_background`; the CLI
+  `--remove-bg` uses the default (Mid). `APP_VERSION = "2.1"`.
+- **No build-command change:** all three session classes were already bundled by
+  `--collect-all rembg`; each model downloads its own `.onnx` on first use. The exe
+  was rebuilt only to embed the new `app.py`.
+- **Verified from source (3/3 tiers):** headless `remove_background` for `u2netp`,
+  `isnet-general-use`, `birefnet-general` → RGBA output, alpha extrema (0,255),
+  transparent corner / opaque subject; GUI smoke (selector renders, default Mid,
+  caption updates Flash/Mid/Omega). **Frozen exe rebuilt + verified:**
+  `--remove-bg` (default Mid/isnet) → RGBA transparent PNG (proves rembg's dynamic
+  session loader works in the bundle); all three tier modules present under
+  `_internal/rembg/sessions` (`u2netp`, `dis_general_use`, `birefnet_general`);
+  GUI launches with no startup crash.
 
 ### 2026-06-08 — v2.0: Marquee — Background Remover
 - **New sidebar section "Marquee"** (image editing). Added to `NAV_ITEMS`
@@ -232,9 +257,10 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 - Created a **Desktop shortcut** to `dist\Bu D3eij\Bu D3eij.exe`.
 
 ## Backlog / next steps
-- [ ] Optional: bundle the u2net model into the exe (`--add-data` + `U2NET_HOME`)
-      so the Background Remover works fully offline on a fresh machine (~176 MB);
-      currently relies on rembg's first-run download/cache, like ffmpeg.
+- [ ] Optional: bundle the Marquee model(s) into the exe (`--add-data` +
+      `U2NET_HOME`) so the Background Remover works fully offline on a fresh
+      machine; currently each tier's `.onnx` (u2netp / isnet-general-use /
+      birefnet-general) is downloaded/cached by rembg on first use, like ffmpeg.
 - [ ] Optional: Marquee polish — live before/after preview thumbnail; a dedicated
       "wand"/"scissors" nav icon via `tools/fetch_icons.py`; more rembg models /
       alpha-matting toggle.

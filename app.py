@@ -582,17 +582,18 @@ def download_youtube(url: str, fmt: str, out_dir, progress_hook=None) -> Path:
     return out
 
 
-# Lazily-created rembg session — the u2net model is loaded once, then reused.
-_REMBG_SESSION = None
+# Lazily-created rembg sessions, cached per model name (model loaded once each).
+_REMBG_SESSIONS: dict = {}
 
 
-def remove_background(src, out_path=None) -> Path:
+def remove_background(src, out_path=None, model: str = "isnet-general-use") -> Path:
     """Remove an image's background and save a transparent PNG; return its path.
 
-    Uses rembg (u2net model). `src` must be an image; the output is always saved
-    as PNG (the only supported image format that preserves transparency). Like
-    `download_youtube`, this lives outside `convert_file`/`CONVERSIONS` — it has
-    no target format to choose.
+    `model` is a rembg model name (see `BG_MODELS` for the Marquee tiers:
+    `u2netp` / `isnet-general-use` / `birefnet-general`). `src` must be an image;
+    the output is always saved as PNG (the only supported image format that
+    preserves transparency). Like `download_youtube`, this lives outside
+    `convert_file`/`CONVERSIONS` — it has no target format to choose.
     """
     from PIL import Image
     from rembg import new_session, remove  # lazy: heavy (onnxruntime + model)
@@ -602,13 +603,14 @@ def remove_background(src, out_path=None) -> Path:
     if ext not in IMAGE_EXTS:
         raise ConversionError(f"Background removal needs an image; got .{ext or '?'}")
 
-    global _REMBG_SESSION
     try:
-        if _REMBG_SESSION is None:
-            # Downloads ~176 MB u2net.onnx on first use, then caches in ~/.u2net.
-            _REMBG_SESSION = new_session("u2net")
+        session = _REMBG_SESSIONS.get(model)
+        if session is None:
+            # Downloads this model's .onnx on first use, then caches in ~/.u2net.
+            session = new_session(model)
+            _REMBG_SESSIONS[model] = session
         with Image.open(src) as im:
-            result = remove(im.convert("RGBA"), session=_REMBG_SESSION)
+            result = remove(im.convert("RGBA"), session=session)
     except Exception as exc:  # noqa: BLE001
         raise ConversionError(f"Background removal failed: {exc}") from exc
 
@@ -644,7 +646,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "2.0"
+APP_VERSION = "2.1"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -666,6 +668,15 @@ NAV_ICONS = {
     "Batch Convert": "layers", "YouTube": "youtube", "Marquee": "sparkles",
     "Tools": "wrench",
 }
+
+# Marquee background-removal tiers -> (rembg model name, one-line blurb).
+# All three ride on the bundled rembg; each downloads its own .onnx on first use.
+BG_MODELS = {
+    "Flash": ("u2netp",            "Fastest · lightweight model for quick cut-outs"),
+    "Mid":   ("isnet-general-use", "Balanced · cleaner edges at near-Flash speed"),
+    "Omega": ("birefnet-general",  "Max precision · best hair/edges, slower + larger download"),
+}
+DEFAULT_BG_TIER = "Mid"
 
 ctk.set_appearance_mode("Dark")
 try:
@@ -2081,13 +2092,31 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                        "transparent canvas. Output is always a PNG.",
             text_color=MUTED, anchor="w", justify="left", wraplength=620,
         ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+
+        # ---- quality (model tier) selector ----
+        qual = ctk.CTkFrame(card, fg_color="transparent")
+        qual.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 2))
+        ctk.CTkLabel(qual, text="QUALITY", font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=MUTED).grid(row=0, column=0, padx=(0, 12))
+        self.mq_model = ctk.CTkSegmentedButton(
+            qual, values=list(BG_MODELS), command=self._on_mq_model_change,
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.mq_model.set(DEFAULT_BG_TIER)
+        self.mq_model.grid(row=0, column=1)
+        self.mq_model_caption = ctk.CTkLabel(
+            card, text=BG_MODELS[DEFAULT_BG_TIER][1], text_color=MUTED,
+            anchor="w", justify="left", wraplength=620,
+        )
+        self.mq_model_caption.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 10))
+
         self.mq_btn = ctk.CTkButton(
             card, text=" Remove Background", height=46,
             font=ctk.CTkFont(size=15, weight="bold"),
             image=self._ui_icon("sparkles", 18, "#FFFFFF", "#FFFFFF"), compound="left",
             command=self.on_marquee_remove, state="disabled",
         )
-        self.mq_btn.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 16))
+        self.mq_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 16))
 
         self.mq_progress = ctk.CTkProgressBar(frame, height=8)
         self.mq_progress.set(0)
@@ -2102,6 +2131,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         return frame
 
     # ---- marquee actions ------------------------------------------------- #
+    def _on_mq_model_change(self, tier: str):
+        blurb = BG_MODELS.get(tier, ("", ""))[1]
+        self.mq_model_caption.configure(text=blurb)
+
     def on_marquee_drop(self, event):
         paths = self._parse_drop(event)
         if paths:
@@ -2158,21 +2191,24 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.mq_status.configure(
                 text="Cancelled (no save location chosen).", text_color=MUTED)
             return
+        tier = self.mq_model.get() or DEFAULT_BG_TIER
+        model = BG_MODELS.get(tier, BG_MODELS[DEFAULT_BG_TIER])[0]
         self.mq_btn.configure(state="disabled")
         self.mq_progress.grid()
         self.mq_progress.configure(mode="indeterminate")
         self.mq_progress.start()
         self.mq_status.configure(
-            text="Removing background… (the first run loads a ~176 MB model)",
+            text=f"Removing background with {tier}… "
+                 "(the first use of a model downloads it once)",
             text_color=MUTED,
         )
         threading.Thread(
-            target=self._marquee_worker, args=(src, Path(out)), daemon=True
+            target=self._marquee_worker, args=(src, Path(out), model), daemon=True
         ).start()
 
-    def _marquee_worker(self, src: Path, out: Path):
+    def _marquee_worker(self, src: Path, out: Path, model: str):
         try:
-            result = remove_background(src, out)
+            result = remove_background(src, out, model)
             self.after(0, self._marquee_done, src, result, None)
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()

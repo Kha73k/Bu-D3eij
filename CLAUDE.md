@@ -110,19 +110,26 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
   GUI **YouTube** page (`_build_youtube` + `on_youtube_download`/`_youtube_worker`/
   `_yt_hook`) and the `--download URL FORMAT` CLI both call it. Output folder is
   asked per-download (filedialog); results go through `add_history`.
-- **Marquee → Background Remover (v2.0):** `remove_background(src, out_path=None)`
-  (rembg, lazy import) opens the image, runs the `u2net` model, and saves a
-  transparent **PNG** (output is always PNG — the only listed image format that
-  keeps alpha). Like `download_youtube` it sits **outside** `convert_file`/
-  `CONVERSIONS` (no target-format choice). The session is cached in a module-level
-  `_REMBG_SESSION` (model loaded once). The model (`~/.u2net/u2net.onnx`, ~176 MB)
-  is downloaded by rembg on first use, then cached. The GUI **Marquee** page
-  (`_build_marquee` + `on_marquee_drop`/`browse_marquee`/`set_marquee_file`/
-  `on_marquee_remove`/`_marquee_worker`/`_marquee_done`) validates the drop is an
-  image (`IMAGE_EXTS`), asks the output path per-run via `asksaveasfilename`
-  (defaults `<stem>_no-bg.png`), shows an **indeterminate** progress bar while the
-  worker thread runs (rembg has no progress callback), and records the result via
-  `add_history`. Nav icon reuses the bundled `assets/ui/sparkles.png`.
+- **Marquee → Background Remover (v2.0, model selector in v2.1):**
+  `remove_background(src, out_path=None, model="isnet-general-use")` (rembg, lazy
+  import) opens the image, runs the chosen rembg model, and saves a transparent
+  **PNG** (output is always PNG — the only listed image format that keeps alpha).
+  Like `download_youtube` it sits **outside** `convert_file`/`CONVERSIONS` (no
+  target-format choice). Sessions are cached per model in the module-level dict
+  `_REMBG_SESSIONS` (each model loaded once). **v2.1** added a **QUALITY** tier
+  selector (`CTkSegmentedButton`) mapped by `BG_MODELS` (top of GUI section):
+  **Flash** = `u2netp` (fastest, ~4.7 MB), **Mid** (default `DEFAULT_BG_TIER`) =
+  `isnet-general-use` (balanced), **Omega** = `birefnet-general` (max precision,
+  big/slow). Each model downloads its own `.onnx` into `~/.u2net/` on first use,
+  then caches — **all three ride on the existing `--collect-all rembg` bundle, so
+  the build command does NOT change** (rebuild the exe only to embed new `app.py`).
+  The GUI **Marquee** page (`_build_marquee` + `_on_mq_model_change`/
+  `on_marquee_drop`/`browse_marquee`/`set_marquee_file`/`on_marquee_remove`/
+  `_marquee_worker`/`_marquee_done`) validates the drop is an image (`IMAGE_EXTS`),
+  asks the output path per-run via `asksaveasfilename` (defaults `<stem>_no-bg.png`),
+  shows an **indeterminate** progress bar while the worker thread runs (rembg has no
+  progress callback), and records the result via `add_history`. Nav icon reuses the
+  bundled `assets/ui/sparkles.png`.
 - **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube,
   Marquee, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
   appearance toggle** (`_toggle_appearance`, `SUN_GLYPH`/`MOON_GLYPH` in
