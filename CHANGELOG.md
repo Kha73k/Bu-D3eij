@@ -5,6 +5,32 @@ This project follows a simple `MAJOR.MINOR` versioning scheme.
 
 ---
 
+## v1.4 — 2026-06-08
+
+A visual redesign for a cleaner, more professional look.
+
+### Added
+- **Colorful file-type icons** throughout — the Converter drop zone shows the
+  dropped file's type, Recent lists each row's icon, and the Home page shows a
+  file-icon showcase. (Icons from vscode-icons / Lucide; see `assets/LICENSES.md`.)
+- **Redesigned Home** — a hero ("Convert anything, to everything."), quick action
+  buttons, a **Popular conversions** row (PDF↔Word, MP4→MP3, JPG→PNG), and a
+  **Supported formats** showcase.
+- **Recent is now a table** — File · From · To · Status (✓ Completed / ✕ Failed)
+  · Time, with per-row Open / Folder actions.
+- **Sidebar nav icons** and a small "Convert anything" tagline.
+
+### Changed
+- Refreshed surfaces, spacing, and typography across all pages (both light and
+  dark themes; dark remains the default).
+
+### Notes
+- This is a UI-only release — no conversion behavior changed. The app is built on
+  CustomTkinter, so the look is a clean flat design (no web-style gradients,
+  shadows, or 3D icons).
+
+---
+
 ## v1.3 — 2026-06-08
 
 Adds YouTube downloads and a nicer appearance toggle.

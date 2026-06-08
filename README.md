@@ -105,7 +105,7 @@ pip install pyinstaller
 pyinstaller --noconfirm --windowed --name "Bu D3eij" `
   --icon "AppLogo.ico" `
   --add-data "AppLogo.ico;." --add-data "DashboardLogo.png;." `
-  --add-data "bud3eij_theme.json;." `
+  --add-data "bud3eij_theme.json;." --add-data "assets;assets" `
   --collect-all customtkinter --collect-all tkinterdnd2 `
   --collect-all pptx --collect-all mammoth --collect-all markdownify --collect-all bs4 `
   --collect-data pdfminer --collect-data pdfplumber `

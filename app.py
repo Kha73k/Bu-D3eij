@@ -593,15 +593,40 @@ RED = "#E11414"
 RED_HOVER = "#B4000C"
 RED_DEEP = "#8C0008"
 RED_BRIGHT = "#F01818"
-SIDEBAR_FG = ("#E4DDDE", "#141011")
+SIDEBAR_FG = ("#F3EEEF", "#141011")
 NAV_TEXT = ("#2A2426", "#F2E9EA")
 DROP_BORDER = ("#E11414", "#B4000C")
 SUCCESS = "#1FA85B"
 ERROR = "#F0282D"
 MUTED = ("#6B6164", "#9C9194")
+# Surfaces for the 1.4 redesign (light, dark).
+CARD = ("#FFFFFF", "#252022")          # elevated card / panel
+CARD_BORDER = ("#E8E1E2", "#332D30")   # hairline card border
+SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
+TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "1.3"
+APP_VERSION = "1.4"
+
+# Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
+EXT_ICON = {
+    "pdf": "pdf", "docx": "word", "doc": "word", "txt": "text", "md": "markdown",
+    "pptx": "powerpoint", "ppt": "powerpoint",
+    "jpg": "image", "jpeg": "image", "png": "image", "webp": "image",
+    "bmp": "image", "gif": "image", "tiff": "image",
+    "mp4": "video", "mp3": "audio", "wav": "audio",
+}
+
+
+def icon_key_for_ext(ext: str) -> str:
+    return EXT_ICON.get(ext.lower().lstrip("."), "default")
+
+
+# Nav label -> UI icon (assets/ui/<name>.png).
+NAV_ICONS = {
+    "Home": "house", "Converter": "repeat", "Recent": "clock",
+    "Batch Convert": "layers", "YouTube": "youtube", "Tools": "wrench",
+}
 
 ctk.set_appearance_mode("Dark")
 try:
@@ -626,6 +651,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.batch_files: list[Path] = []
         self.history: list[dict] = load_history()
         self.appearance_mode = "Dark"  # toggled by the sun/moon button
+        self._icon_cache: dict = {}  # (kind, name, size, colors) -> CTkImage
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -663,30 +689,86 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             print("Could not load logo", name, ":", exc)
             return None
 
+    # ---- icons ----------------------------------------------------------- #
+    @staticmethod
+    def _hex_rgb(color: str) -> tuple[int, int, int]:
+        c = color.lstrip("#")
+        return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+    def _filetype_icon(self, ext: str, size: int = 36):
+        """Colored file-type badge (CTkImage) for a file extension. Cached."""
+        key = ("ft", icon_key_for_ext(ext), size)
+        if key in self._icon_cache:
+            return self._icon_cache[key]
+        try:
+            from PIL import Image
+
+            img = Image.open(resource_path(f"assets/filetypes/{key[1]}.png")).convert("RGBA")
+            w, h = img.size
+            scale = size / max(w, h)
+            ci = ctk.CTkImage(light_image=img, dark_image=img,
+                              size=(int(w * scale), int(h * scale)))
+        except Exception as exc:  # noqa: BLE001
+            print("icon load failed", ext, exc)
+            ci = None
+        self._icon_cache[key] = ci
+        return ci
+
+    def _ui_icon(self, name: str, size: int = 18,
+                 light: str = "#3A3436", dark: str = "#D8CFD1"):
+        """Monochrome UI icon re-tinted per theme (CTkImage). Cached."""
+        key = ("ui", name, size, light, dark)
+        if key in self._icon_cache:
+            return self._icon_cache[key]
+        try:
+            from PIL import Image
+
+            base = Image.open(resource_path(f"assets/ui/{name}.png")).convert("RGBA")
+            alpha = base.split()[3]
+
+            def tint(hexcolor: str) -> "Image.Image":
+                solid = Image.new("RGBA", base.size, self._hex_rgb(hexcolor) + (0,))
+                solid.putalpha(alpha)
+                return solid
+
+            ci = ctk.CTkImage(light_image=tint(light), dark_image=tint(dark),
+                              size=(size, size))
+        except Exception as exc:  # noqa: BLE001
+            print("ui icon load failed", name, exc)
+            ci = None
+        self._icon_cache[key] = ci
+        return ci
+
     # ---- layout ---------------------------------------------------------- #
     def _build_sidebar(self):
         sidebar = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color=SIDEBAR_FG)
         sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_rowconfigure(len(NAV_ITEMS) + 1, weight=1)
 
-        self.sidebar_logo = self._load_logo("DashboardLogo.png", 160)
+        header = ctk.CTkFrame(sidebar, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=12, pady=(20, 14))
+        self.sidebar_logo = self._load_logo("DashboardLogo.png", 150)
         if self.sidebar_logo is not None:
-            ctk.CTkLabel(sidebar, text="", image=self.sidebar_logo).grid(
-                row=0, column=0, padx=12, pady=(20, 16)
-            )
+            ctk.CTkLabel(header, text="", image=self.sidebar_logo).pack(anchor="w")
         else:
             ctk.CTkLabel(
-                sidebar, text=APP_NAME, font=ctk.CTkFont(size=20, weight="bold")
-            ).grid(row=0, column=0, padx=20, pady=(20, 12))
+                header, text=APP_NAME, font=ctk.CTkFont(size=20, weight="bold")
+            ).pack(anchor="w")
+        ctk.CTkLabel(
+            header, text="Convert anything", text_color=MUTED,
+            font=ctk.CTkFont(size=12),
+        ).pack(anchor="w", padx=(4, 0))
 
         self.nav_buttons: dict[str, ctk.CTkButton] = {}
         for i, name in enumerate(NAV_ITEMS, start=1):
             btn = ctk.CTkButton(
-                sidebar, text=name, anchor="w", height=38, corner_radius=8,
-                fg_color="transparent", hover_color=RED_HOVER, text_color=NAV_TEXT,
+                sidebar, text="  " + name, anchor="w", height=40, corner_radius=8,
+                image=self._ui_icon(NAV_ICONS[name], 18), compound="left",
+                fg_color="transparent", hover_color=("#EBE0E1", "#2A2426"),
+                text_color=NAV_TEXT,
                 command=lambda n=name: self.show_frame(n),
             )
-            btn.grid(row=i, column=0, padx=12, pady=4, sticky="ew")
+            btn.grid(row=i, column=0, padx=12, pady=3, sticky="ew")
             self.nav_buttons[name] = btn
 
         # Sun / moon appearance toggle (shows the mode you can switch to).
@@ -720,12 +802,20 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         frame = self.frames.get(name)
         if frame is None:
             return
-        frame.tkraise()
+        # grid/grid_remove (not tkraise) so a CTkScrollableFrame raises reliably
+        # above the plain sibling frames sharing the same grid cell.
+        for f in self.frames.values():
+            if f is not frame:
+                f.grid_remove()
+        frame.grid()
         for n, btn in self.nav_buttons.items():
             active = n == name
+            icon = (self._ui_icon(NAV_ICONS[n], 18, light="#FFFFFF", dark="#FFFFFF")
+                    if active else self._ui_icon(NAV_ICONS[n], 18))
             btn.configure(
                 fg_color=RED if active else "transparent",
                 text_color="#FFFFFF" if active else NAV_TEXT,
+                image=icon,
             )
         if name == "Recent":
             self._refresh_recent()
@@ -747,60 +837,124 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if subtitle:
             ctk.CTkLabel(head, text=subtitle, text_color=MUTED).pack(anchor="w", pady=(2, 0))
 
+    def _bind_click(self, widget, command) -> None:
+        """Make a whole card clickable (widget + all descendants)."""
+        widget.bind("<Button-1>", lambda _e: command())
+        try:
+            widget.configure(cursor="hand2")
+        except Exception:  # noqa: BLE001 - some widgets reject cursor
+            pass
+        for child in widget.winfo_children():
+            self._bind_click(child, command)
+
+    def _popular_card(self, parent, col, from_ext, to_ext, label):
+        card = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=12,
+                            border_width=1, border_color=CARD_BORDER)
+        card.grid(row=0, column=col, padx=5, sticky="ew")
+        icons = ctk.CTkFrame(card, fg_color="transparent")
+        icons.pack(padx=16, pady=(16, 6))
+        ctk.CTkLabel(icons, text="", image=self._filetype_icon(from_ext, 30)).pack(side="left")
+        ctk.CTkLabel(icons, text="", image=self._ui_icon("arrow-right", 16)).pack(side="left", padx=9)
+        ctk.CTkLabel(icons, text="", image=self._filetype_icon(to_ext, 30)).pack(side="left")
+        ctk.CTkLabel(
+            card, text=label, text_color=TEXT, font=ctk.CTkFont(size=12, weight="bold"),
+        ).pack(pady=(0, 14))
+        self._bind_click(card, lambda: self.show_frame("Converter"))
+
     def _build_home(self, parent) -> ctk.CTkFrame:
-        frame = ctk.CTkFrame(parent)
+        # NOTE: must be opaque — a transparent frame lets the stacked sibling
+        # frame (same grid cell) show through when raised.
+        frame = ctk.CTkScrollableFrame(parent, fg_color=("#EAE5E6", "#231F21"))
         frame.grid_columnconfigure(0, weight=1)
 
-        self.home_logo = self._load_logo("DashboardLogo.png", 300)
-        if self.home_logo is not None:
-            ctk.CTkLabel(frame, text="", image=self.home_logo).grid(
-                row=0, column=0, sticky="w", padx=30, pady=(36, 2)
-            )
-        else:
-            ctk.CTkLabel(
-                frame, text=APP_NAME, font=ctk.CTkFont(size=28, weight="bold"),
-                text_color=RED,
-            ).grid(row=0, column=0, sticky="w", padx=30, pady=(36, 2))
-
+        # ---- hero ----
+        hero = ctk.CTkFrame(frame, fg_color=SURFACE_SOFT, corner_radius=18)
+        hero.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 16))
+        hero.grid_columnconfigure(0, weight=1)
+        text = ctk.CTkFrame(hero, fg_color="transparent")
+        text.grid(row=0, column=0, sticky="w", padx=(28, 12), pady=(28, 24))
         ctk.CTkLabel(
-            frame, text="Convert documents, presentations, images, audio and video — fast.",
-            font=ctk.CTkFont(size=14), text_color=MUTED,
-        ).grid(row=1, column=0, sticky="w", padx=32, pady=(0, 20))
-
-        actions = ctk.CTkFrame(frame, fg_color="transparent")
-        actions.grid(row=2, column=0, sticky="w", padx=30, pady=(0, 22))
+            text, text="Convert anything,", anchor="w", text_color=TEXT,
+            font=ctk.CTkFont(size=30, weight="bold"),
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            text, text="to everything.", anchor="w", text_color=RED,
+            font=ctk.CTkFont(size=30, weight="bold"),
+        ).pack(anchor="w")
+        ctk.CTkLabel(
+            text, text="Fast, private, on-device conversion — documents, slides,\n"
+                       "images, audio & video. Plus YouTube downloads.",
+            anchor="w", justify="left", text_color=MUTED, font=ctk.CTkFont(size=13),
+        ).pack(anchor="w", pady=(8, 16))
+        actions = ctk.CTkFrame(text, fg_color="transparent")
+        actions.pack(anchor="w")
         ctk.CTkButton(
-            actions, text="Convert a File", width=160, height=44,
-            font=ctk.CTkFont(size=14, weight="bold"),
+            actions, text=" Convert a File", height=42, image=self._ui_icon("repeat", 18, "#FFFFFF", "#FFFFFF"),
+            compound="left", font=ctk.CTkFont(size=14, weight="bold"),
             command=lambda: self.show_frame("Converter"),
-        ).grid(row=0, column=0, padx=(0, 12))
+        ).pack(side="left", padx=(0, 10))
         ctk.CTkButton(
-            actions, text="Batch Convert", width=160, height=44,
-            fg_color="transparent", border_width=2, border_color=RED,
-            text_color=NAV_TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
+            actions, text=" Batch", height=42, image=self._ui_icon("layers", 18),
+            compound="left", fg_color="transparent", border_width=2, border_color=RED,
+            text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
             command=lambda: self.show_frame("Batch Convert"),
-        ).grid(row=0, column=1)
+        ).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(
+            actions, text=" YouTube", height=42, image=self._ui_icon("youtube", 18),
+            compound="left", fg_color="transparent", border_width=2, border_color=RED,
+            text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
+            command=lambda: self.show_frame("YouTube"),
+        ).pack(side="left")
 
-        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
-        card.grid(row=3, column=0, sticky="w", padx=30, pady=(0, 20))
+        cluster = ctk.CTkFrame(hero, fg_color="transparent")
+        cluster.grid(row=0, column=1, padx=(8, 26), pady=20, sticky="e")
+        for idx, ext in enumerate(["pdf", "docx", "pptx", "mp4", "jpg", "mp3"]):
+            r, c = divmod(idx, 3)
+            tile = ctk.CTkFrame(cluster, width=60, height=60, fg_color=CARD, corner_radius=14)
+            tile.grid(row=r, column=c, padx=6, pady=6)
+            tile.grid_propagate(False)
+            tile.grid_rowconfigure(0, weight=1)
+            tile.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(tile, text="", image=self._filetype_icon(ext, 34)).grid(row=0, column=0)
+
+        # ---- popular conversions ----
         ctk.CTkLabel(
-            card, text="Supported formats", font=ctk.CTkFont(size=14, weight="bold"),
-        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(14, 8))
-        for r, (cat, fmts) in enumerate(
-            [("Images", "JPG · PNG · WEBP · BMP · GIF · TIFF"),
-             ("Documents", "PDF · DOCX · TXT · MD"),
-             ("Presentations", "PPTX"),
-             ("Audio / Video", "MP4 · MP3 · WAV")],
-            start=1,
-        ):
+            frame, text="Popular conversions", anchor="w", text_color=TEXT,
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).grid(row=1, column=0, sticky="w", padx=10, pady=(2, 8))
+        pop = ctk.CTkFrame(frame, fg_color="transparent")
+        pop.grid(row=2, column=0, sticky="ew", padx=4, pady=(0, 16))
+        for c in range(4):
+            pop.grid_columnconfigure(c, weight=1, uniform="pop")
+        for col, (fe, te, lbl) in enumerate([
+            ("pdf", "docx", "PDF to Word"), ("docx", "pdf", "Word to PDF"),
+            ("mp4", "mp3", "MP4 to MP3"), ("jpg", "png", "JPG to PNG"),
+        ]):
+            self._popular_card(pop, col, fe, te, lbl)
+
+        # ---- supported formats ----
+        ctk.CTkLabel(
+            frame, text="Supported formats", anchor="w", text_color=TEXT,
+            font=ctk.CTkFont(size=15, weight="bold"),
+        ).grid(row=3, column=0, sticky="w", padx=10, pady=(2, 8))
+        card = ctk.CTkFrame(frame, fg_color=CARD, corner_radius=12,
+                            border_width=1, border_color=CARD_BORDER)
+        card.grid(row=4, column=0, sticky="ew", padx=6, pady=(0, 16))
+        card.grid_columnconfigure(2, weight=1)
+        for r, (rep_ext, cat, fmts) in enumerate([
+            ("txt", "Documents", "PDF · DOCX · TXT · MD"),
+            ("pptx", "Presentations", "PPTX"),
+            ("jpg", "Images", "JPG · PNG · WEBP · BMP · GIF · TIFF"),
+            ("mp4", "Audio / Video", "MP4 · MP3 · WAV"),
+        ]):
+            ctk.CTkLabel(card, text="", image=self._filetype_icon(rep_ext, 26)).grid(
+                row=r, column=0, padx=(16, 10), pady=10)
             ctk.CTkLabel(
                 card, text=cat, font=ctk.CTkFont(size=12, weight="bold"),
-                text_color=RED, width=110, anchor="w",
-            ).grid(row=r, column=0, sticky="w", padx=(20, 8), pady=2)
+                text_color=TEXT, width=110, anchor="w",
+            ).grid(row=r, column=1, sticky="w", pady=10)
             ctk.CTkLabel(card, text=fmts, text_color=MUTED, anchor="w").grid(
-                row=r, column=1, sticky="w", padx=(0, 20), pady=2
-            )
-        ctk.CTkLabel(card, text="", height=6).grid(row=4, column=0)
+                row=r, column=2, sticky="w", padx=(0, 16), pady=10)
         return frame
 
     def _build_tools(self, parent) -> ctk.CTkFrame:
@@ -848,22 +1002,39 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                 return
 
     # ---- recent view ----------------------------------------------------- #
+    def _recent_columns(self, widget) -> None:
+        """Apply the shared table column layout to a header/row frame."""
+        widget.grid_columnconfigure(0, weight=1)          # File (expands)
+        for col, minw in ((1, 64), (2, 64), (3, 120), (4, 110), (5, 140)):
+            widget.grid_columnconfigure(col, minsize=minw)
+
     def _build_recent(self, parent) -> ctk.CTkFrame:
         frame = ctk.CTkFrame(parent)
         frame.grid_columnconfigure(0, weight=1)
-        frame.grid_rowconfigure(2, weight=1)
+        frame.grid_rowconfigure(3, weight=1)
         self._section_header(frame, "Recent", "Your conversion history.")
 
         bar = ctk.CTkFrame(frame, fg_color="transparent")
         bar.grid(row=1, column=0, sticky="ew", padx=24)
         bar.grid_columnconfigure(0, weight=1)
         ctk.CTkButton(
-            bar, text="Clear history", width=120, fg_color="gray50",
-            hover_color="gray40", command=self.clear_history,
+            bar, text="Clear history", width=120, height=32,
+            image=self._ui_icon("layers", 16), compound="left",
+            fg_color=("#E7DFE0", "#2E2A2C"), hover_color=("#D9CFD1", "#3A3438"),
+            text_color=TEXT, command=self.clear_history,
         ).grid(row=0, column=1, sticky="e")
 
-        self.recent_scroll = ctk.CTkScrollableFrame(frame)
-        self.recent_scroll.grid(row=2, column=0, sticky="nsew", padx=24, pady=10)
+        head = ctk.CTkFrame(frame, fg_color="transparent")
+        head.grid(row=2, column=0, sticky="ew", padx=30, pady=(12, 0))
+        self._recent_columns(head)
+        for col, title in enumerate(["File", "From", "To", "Status", "Time", ""]):
+            ctk.CTkLabel(
+                head, text=title, text_color=MUTED, anchor="w",
+                font=ctk.CTkFont(size=11, weight="bold"),
+            ).grid(row=0, column=col, sticky="w", padx=(2, 6))
+
+        self.recent_scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
+        self.recent_scroll.grid(row=3, column=0, sticky="nsew", padx=24, pady=(4, 12))
         self.recent_scroll.grid_columnconfigure(0, weight=1)
         self._refresh_recent()
         return frame
@@ -875,36 +1046,67 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             child.destroy()
         if not self.history:
             ctk.CTkLabel(
-                self.recent_scroll, text="No conversions yet."
-            ).grid(row=0, column=0, sticky="w", padx=10, pady=10)
+                self.recent_scroll, text="No conversions yet — your results will appear here.",
+                text_color=MUTED,
+            ).grid(row=0, column=0, sticky="w", padx=10, pady=16)
             return
         for i, entry in enumerate(self.history):
             self._recent_row(i, entry)
 
     def _recent_row(self, i: int, entry: dict):
-        row = ctk.CTkFrame(self.recent_scroll)
-        row.grid(row=i, column=0, sticky="ew", padx=4, pady=4)
-        row.grid_columnconfigure(0, weight=1)
-        src_name = Path(entry.get("source", "")).name or "?"
-        if entry.get("ok"):
-            out_name = Path(entry.get("output", "")).name or "?"
-            text = f"{entry.get('time', '')}   {src_name}  ->  {out_name}"
-            color = ("gray10", "gray90")
-        else:
-            text = f"{entry.get('time', '')}   {src_name}   FAILED: {entry.get('error', '')}"
-            color = "#e74c3c"
+        src = entry.get("source", "") or ""
+        out = entry.get("output", "") or ""
+        ok = bool(entry.get("ok"))
+        is_url = src.lower().startswith(("http://", "https://"))
+
+        name = Path(out).name if (ok and out) else (
+            self._ellipsize(src, 44) if is_url else (Path(src).name or "?"))
+        from_ext = "URL" if is_url else (detect_format(src).upper() or "?")
+        to_ext = (detect_format(out).upper() or "?") if out else "?"
+        icon_ext = (detect_format(out) if (ok and out) else detect_format(src)) or "x"
+
+        row = ctk.CTkFrame(self.recent_scroll, fg_color=CARD, corner_radius=8)
+        row.grid(row=i, column=0, sticky="ew", pady=3, padx=2)
+        self._recent_columns(row)
+
+        fcell = ctk.CTkFrame(row, fg_color="transparent")
+        fcell.grid(row=0, column=0, sticky="ew", padx=(10, 6), pady=8)
+        ic = self._filetype_icon(icon_ext, 24)
+        if ic is not None:
+            ctk.CTkLabel(fcell, text="", image=ic).pack(side="left", padx=(0, 8))
+        txt = ctk.CTkFrame(fcell, fg_color="transparent")
+        txt.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(txt, text=self._ellipsize(name, 46), anchor="w", text_color=TEXT).pack(anchor="w")
+        if not ok and entry.get("error"):
+            ctk.CTkLabel(
+                txt, text=self._ellipsize(str(entry["error"]), 60), anchor="w",
+                text_color=MUTED, font=ctk.CTkFont(size=11),
+            ).pack(anchor="w")
+
+        ctk.CTkLabel(row, text=from_ext, text_color=MUTED, anchor="w").grid(row=0, column=1, sticky="w")
+        ctk.CTkLabel(row, text=to_ext, text_color=TEXT, anchor="w").grid(row=0, column=2, sticky="w")
         ctk.CTkLabel(
-            row, text=text, anchor="w", justify="left",
-            text_color=color, wraplength=470,
-        ).grid(row=0, column=0, sticky="w", padx=8, pady=6)
-        if entry.get("ok") and entry.get("output"):
-            out = entry["output"]
+            row, text=("✓ Completed" if ok else "✕ Failed"),
+            text_color=(SUCCESS if ok else ERROR), anchor="w",
+        ).grid(row=0, column=3, sticky="w")
+        ctk.CTkLabel(row, text=entry.get("time", ""), text_color=MUTED, anchor="w").grid(
+            row=0, column=4, sticky="w")
+
+        if ok and out:
+            # Only build the actions frame when it has buttons — an empty
+            # CTkFrame keeps its default 200px height and stretches the row.
+            act = ctk.CTkFrame(row, fg_color="transparent")
+            act.grid(row=0, column=5, sticky="e", padx=(0, 8))
             ctk.CTkButton(
-                row, text="Open", width=56, command=lambda p=out: self.open_path(p)
-            ).grid(row=0, column=1, padx=2)
+                act, text="Open", width=50, height=26,
+                command=lambda p=out: self.open_path(p),
+            ).pack(side="left", padx=(0, 6))
             ctk.CTkButton(
-                row, text="Folder", width=64, command=lambda p=out: self.open_folder(p)
-            ).grid(row=0, column=2, padx=(2, 8))
+                act, text="Folder", width=60, height=26,
+                fg_color="transparent", border_width=1, border_color=CARD_BORDER,
+                text_color=TEXT, hover_color=("#EBE0E1", "#332D30"),
+                command=lambda p=out: self.open_folder(p),
+            ).pack(side="left")
 
     def add_history(self, src, out, ok: bool, error="") -> None:
         entry = {
@@ -957,7 +1159,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.drop_zone.grid_rowconfigure(0, weight=1)
         inner = ctk.CTkFrame(self.drop_zone, fg_color="transparent")
         inner.grid(row=0, column=0)
-        self.drop_icon = self._load_logo("AppLogo.png", 50)
+        # On-theme folder icon from bundled assets (renders in the frozen exe;
+        # AppLogo.png was never bundled). Swapped for the file's type icon on drop.
+        self.drop_icon = self._ui_icon("folder-open", 46, light=RED, dark=RED_BRIGHT)
         self.drop_icon_label = ctk.CTkLabel(inner, text="", image=self.drop_icon)
         self.drop_icon_label.pack(pady=(0, 8))
         self.drop_primary = ctk.CTkLabel(
@@ -1064,7 +1268,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.batch_to = ctk.CTkOptionMenu(ctrl, values=["-"], width=140, state="disabled")
         self.batch_to.grid(row=0, column=1, padx=(0, 16))
         self.batch_btn = ctk.CTkButton(
-            ctrl, text="Convert All", width=130, font=ctk.CTkFont(weight="bold"),
+            ctrl, text=" Convert All", width=140, font=ctk.CTkFont(weight="bold"),
+            image=self._ui_icon("repeat", 16, "#FFFFFF", "#FFFFFF"), compound="left",
             command=self.on_batch_convert, state="disabled",
         )
         self.batch_btn.grid(row=0, column=2)
@@ -1152,6 +1357,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         except OSError:
             size = "?"
         self.drop_primary.configure(text=path.name)
+        ft_icon = self._filetype_icon(ext, 52)
+        if ft_icon is not None:
+            self.drop_icon_label.configure(image=ft_icon)
         self.from_menu.configure(values=[ext or "?"])
         self.from_menu.set(ext or "?")
         if targets:
@@ -1178,6 +1386,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         """Reset the converter to a clean slate for the next file."""
         self.selected_file = None
         self.export_dir = None
+        if self.drop_icon is not None:
+            self.drop_icon_label.configure(image=self.drop_icon)
         self.drop_primary.configure(text="Drag & drop a file here")
         self.drop_secondary.configure(text="or click to browse")
         self.from_menu.configure(values=["-"], state="disabled")
@@ -1333,7 +1543,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         ).grid(row=0, column=2, padx=(14, 0))
 
         self.yt_btn = ctk.CTkButton(
-            card, text="Download", height=46, font=ctk.CTkFont(size=15, weight="bold"),
+            card, text=" Download", height=46, font=ctk.CTkFont(size=15, weight="bold"),
+            image=self._ui_icon("download", 18, "#FFFFFF", "#FFFFFF"), compound="left",
             command=self.on_youtube_download,
         )
         self.yt_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(8, 16))

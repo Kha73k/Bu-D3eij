@@ -4,17 +4,48 @@ Running log of what's done and what's next. Update at the end of each session.
 
 _Last updated: 2026-06-08_
 
-## Status: working app + standalone exe — v1.3
+## Status: working app + standalone exe — v1.4
 
 Core app, all required conversions, Recent history, Batch Convert, and a
-packaged one-folder exe are complete and verified. v1.1 adds PowerPoint (.pptx)
-input and Markdown (.md) output; v1.2 is a bug-fix/cleanup pass; v1.3 adds
-YouTube downloads and a sun/moon appearance toggle.
+packaged one-folder exe are complete and verified. v1.1 = PowerPoint + Markdown;
+v1.2 = bug fixes; v1.3 = YouTube downloads + sun/moon toggle; v1.4 = visual
+redesign (file-type icons, hero Home, table Recent).
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
-(branch `main`). Commit/push as work lands.
+(branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-08 — v1.4: professional visual redesign
+- **Icon assets:** sourced file-type icons (vscode-icons, MIT) + UI/nav icons
+  (lucide, ISC) via the Iconify API, rendered to transparent PNGs locally
+  (svglib + rlPyCairo/pycairo; two-background alpha trick). Committed under
+  `assets/filetypes/` + `assets/ui/` with `assets/LICENSES.md`; generator kept at
+  `tools/fetch_icons.py`. Dev-only render deps (svglib/pycairo/etc.) are NOT in
+  requirements and NOT bundled.
+- **Icon helpers:** `icon_key_for_ext`/`EXT_ICON`, `_filetype_icon(ext,size)`
+  (colored, cached), `_ui_icon(name,size,light,dark)` (alpha-tinted per theme,
+  cached); `self._icon_cache`.
+- **Sidebar:** logo + "Convert anything" tagline; nav buttons get leading icons;
+  active state swaps to a white icon on the red pill.
+- **Home (restyled):** hero headline + honest subtitle + file-icon cluster,
+  quick-action buttons, **Popular conversions** cards, **Supported formats**
+  showcase. Home is now a `CTkScrollableFrame`.
+- **Converter:** drop zone shows the selected file's type icon.
+- **Recent:** rebuilt as a table (File icon+name · From · To · Status · Time ·
+  Open/Folder).
+- **Palette:** added `CARD`/`CARD_BORDER`/`SURFACE_SOFT`/`TEXT`; cleaner sidebar.
+- **Build:** added `--add-data "assets;assets"`. `APP_VERSION = "1.4"`.
+- Verified: GUI smoke (both themes), screenshots of Home/Converter/Recent in
+  light + dark.
+
+#### Gotchas fixed during 1.4
+- `show_frame` now uses **grid/grid_remove** (not `tkraise`) — a
+  `CTkScrollableFrame` (Home) wouldn't raise above the plain sibling frames.
+- A transparent top-level frame let the stacked sibling show through (Home must
+  be opaque).
+- An **empty `CTkFrame` keeps its default 200px size** — the failed-row actions
+  frame stretched table rows until built only when it has buttons.
 
 ### 2026-06-08 — v1.3: YouTube downloads + sun/moon toggle
 - **Sun/moon appearance toggle** (sidebar): replaced the System/Light/Dark

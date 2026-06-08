@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('AppLogo.ico', '.'), ('DashboardLogo.png', '.'), ('bud3eij_theme.json', '.')]
+datas = [('AppLogo.ico', '.'), ('DashboardLogo.png', '.'), ('bud3eij_theme.json', '.'), ('assets', 'assets')]
 binaries = []
 hiddenimports = ['tabulate', 'win32timezone']
 datas += collect_data_files('pdfminer')
