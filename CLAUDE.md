@@ -45,6 +45,7 @@ testable without the GUI); the `App` class is a thin GUI layer on top.
   --collect-data pdfminer --collect-data pdfplumber `
   --collect-data docx --collect-data pdf2docx --collect-data reportlab `
   --collect-submodules pymupdf4llm --hidden-import tabulate `
+  --collect-all yt_dlp `
   --exclude-module pymupdf.layout --exclude-module onnxruntime --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
@@ -76,9 +77,19 @@ testable without the GUI); the `App` class is a thin GUI layer on top.
   (`_pptx_to_pdf_powerpoint` COM → `_pptx_to_pdf_reportlab` fallback),
   `convert_av` (ffmpeg-python). Each **imports its heavy deps lazily** inside
   the function for fast startup — keep this pattern.
-- **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, Tools) raising
-  stacked frames — all functional. Each `_build_*` view starts with
-  `_section_header(title, subtitle)`; controls sit in rounded "cards"
+- **YouTube download:** `download_youtube(url, fmt, out_dir, progress_hook)`
+  (yt-dlp, lazy import) — `fmt` is `mp3` (FFmpegExtractAudio 192 kbps) or `mp4`
+  (`bestvideo+bestaudio`, `merge_output_format=mp4`). Needs ffmpeg (sets
+  `ffmpeg_location`). Not part of `convert_file` (it has no source file); the
+  GUI **YouTube** page (`_build_youtube` + `on_youtube_download`/`_youtube_worker`/
+  `_yt_hook`) and the `--download URL FORMAT` CLI both call it. Output folder is
+  asked per-download (filedialog); results go through `add_history`.
+- **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube, Tools)
+  raising stacked frames — all functional. The sidebar foot has a **sun/moon
+  appearance toggle** (`_toggle_appearance`, `SUN_GLYPH`/`MOON_GLYPH` in
+  "Segoe UI Symbol"), replacing the old Light/Dark/System dropdown. Each
+  `_build_*` view starts with `_section_header(title, subtitle)`; controls sit in
+  rounded "cards"
   (`fg_color=("#DFD9DA","#2B2629")`). Conversions run on a worker
   `threading.Thread`; UI updates are marshalled back with `self.after(0, ...)`
   (Tkinter is not thread-safe). Drop zones are built with an inner frame of
@@ -94,8 +105,9 @@ testable without the GUI); the `App` class is a thin GUI layer on top.
   (`load_history`/`save_history`, cap `MAX_HISTORY`). `add_history()` mutates the
   shared `self.history`, so off the main thread it must be called via
   `self.after(0, self.add_history, ...)` (both the single and batch paths do).
-- **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT` runs headless;
-  no flags → GUI.
+- **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT` and
+  `--download URL FORMAT` (mp3/mp4, saves to cwd) run headless; no flags → GUI.
+  Both double as the way to smoke-test the frozen exe.
 - **Branding/assets:** `resource_path()` resolves bundled files in dev and in
   the frozen exe (`sys._MEIPASS`). Window + exe icon = `AppLogo.ico`; in-app
   logo (sidebar header + Home banner) = `DashboardLogo.png` loaded via
@@ -135,7 +147,10 @@ testable without the GUI); the `App` class is a thin GUI layer on top.
   explicit collectors in the build command: `--collect-all pptx mammoth
   markdownify bs4` (python-pptx ships a default template; markdownify→bs4 needs
   its submodules) and `--collect-submodules pymupdf4llm --hidden-import tabulate`.
-  ffmpeg is NOT bundled (relies on the system install).
+  **yt-dlp** loads its ~1800 extractors lazily, so static analysis misses them —
+  use `--collect-all yt_dlp` (this enlarges the exe but is required for downloads
+  to work). ffmpeg is NOT bundled (relies on the system install; yt-dlp mp3/mp4
+  both need it).
 - **pymupdf4llm + the `pymupdf.layout` trap (PDF→MD):** pymupdf4llm's
   `__init__` tries `import pymupdf.layout` and, if it succeeds, calls
   `pymupdf.layout.activate()` at **import time**. `pymupdf.layout` is a separate

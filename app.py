@@ -514,10 +514,79 @@ def convert_file(src, target_ext: str, out_dir=None) -> Path:
 
 
 # --------------------------------------------------------------------------- #
+# YouTube download (yt-dlp + ffmpeg)
+# --------------------------------------------------------------------------- #
+YT_FORMATS = ("mp3", "mp4")
+
+
+def download_youtube(url: str, fmt: str, out_dir, progress_hook=None) -> Path:
+    """Download a YouTube (or other yt-dlp-supported) URL as mp3 or mp4.
+
+    `fmt` is "mp3" (192 kbps audio) or "mp4" (best video+audio, merged).
+    Saves into `out_dir` and returns the output path. Needs ffmpeg.
+    """
+    import yt_dlp
+
+    fmt = fmt.lower().lstrip(".")
+    if fmt not in YT_FORMATS:
+        raise ConversionError(f"Unsupported download format: {fmt}")
+    url = (url or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise ConversionError("Enter a valid video URL (must start with http:// or https://).")
+    if shutil.which("ffmpeg") is None:
+        raise ConversionError(
+            "ffmpeg is not installed or not on PATH. Install it "
+            "(e.g. 'winget install Gyan.FFmpeg') and restart the app."
+        )
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    outtmpl = str(out_dir / "%(title)s.%(ext)s")
+    opts: dict = {
+        "outtmpl": outtmpl,
+        "ffmpeg_location": shutil.which("ffmpeg"),
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,  # a single video, even if the URL has a list= param
+        "restrictfilenames": True,  # filesystem-safe names
+    }
+    if progress_hook:
+        opts["progress_hooks"] = [progress_hook]
+    if fmt == "mp3":
+        opts["format"] = "bestaudio/best"
+        opts["postprocessors"] = [{
+            "key": "FFmpegExtractAudio",
+            "preferredcodec": "mp3",
+            "preferredquality": "192",
+        }]
+    else:  # mp4
+        opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        opts["merge_output_format"] = "mp4"
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            produced = Path(ydl.prepare_filename(info))
+    except yt_dlp.utils.DownloadError as exc:
+        raise ConversionError(f"Download failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise ConversionError(f"Download failed: {exc}") from exc
+
+    # The post-processor changes the extension; resolve the final file.
+    out = produced.with_suffix(f".{fmt}")
+    if not out.exists():
+        # Fall back to whatever landed if the suffix guess is off.
+        if produced.exists():
+            return produced
+        raise ConversionError("Download finished but the output file was not found.")
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # GUI
 # --------------------------------------------------------------------------- #
 APP_NAME = "Bu D3eij"
-NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "Tools"]
+NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "YouTube", "Tools"]
 
 # Logo-derived palette (extracted from AppLogo.png).
 RED = "#E11414"
@@ -639,6 +708,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.frames: dict[str, ctk.CTkFrame] = {
             "Converter": self._build_converter(container),
             "Batch Convert": self._build_batch(container),
+            "YouTube": self._build_youtube(container),
             "Home": self._build_home(container),
             "Recent": self._build_recent(container),
             "Tools": self._build_tools(container),
@@ -1231,9 +1301,125 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.batch_list.insert("end", msg + "\n")
         self.batch_list.see("end")
 
+    # ---- youtube view ---------------------------------------------------- #
+    def _build_youtube(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+        self._section_header(frame, "YouTube", "Paste a link, pick a format, download.")
+
+        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 12))
+        card.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            card, text="VIDEO URL", font=ctk.CTkFont(size=11, weight="bold"), text_color=MUTED,
+        ).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 2))
+        self.yt_url = ctk.CTkEntry(
+            card, placeholder_text="https://www.youtube.com/watch?v=…", height=40,
+        )
+        self.yt_url.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 10))
+        self.yt_url.bind("<Return>", lambda _e: self.on_youtube_download())
+
+        opts = ctk.CTkFrame(card, fg_color="transparent")
+        opts.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 6))
+        ctk.CTkLabel(opts, text="Format:").grid(row=0, column=0, padx=(0, 10))
+        self.yt_format = ctk.CTkSegmentedButton(
+            opts, values=["MP4", "MP3"], selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.yt_format.set("MP4")
+        self.yt_format.grid(row=0, column=1)
+        ctk.CTkLabel(
+            opts, text="MP4 = video · MP3 = audio (192 kbps)", text_color=MUTED,
+        ).grid(row=0, column=2, padx=(14, 0))
+
+        self.yt_btn = ctk.CTkButton(
+            card, text="Download", height=46, font=ctk.CTkFont(size=15, weight="bold"),
+            command=self.on_youtube_download,
+        )
+        self.yt_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(8, 16))
+
+        self.yt_progress = ctk.CTkProgressBar(frame, height=8)
+        self.yt_progress.set(0)
+        self.yt_progress.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.yt_progress.grid_remove()
+
+        self.yt_status = ctk.CTkLabel(
+            frame, text="Paste a video link to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.yt_status.grid(row=3, column=0, sticky="w", padx=24, pady=(4, 16))
+        return frame
+
+    def on_youtube_download(self):
+        url = self.yt_url.get().strip()
+        if not url:
+            self.yt_status.configure(text="Please paste a video URL.", text_color="orange")
+            return
+        fmt = self.yt_format.get().lower()
+        folder = filedialog.askdirectory(title="Choose where to save the download")
+        if not folder:
+            self.yt_status.configure(text="Download cancelled (no folder chosen).", text_color=MUTED)
+            return
+        self.yt_btn.configure(state="disabled")
+        self.yt_progress.grid()
+        self.yt_progress.configure(mode="determinate")
+        self.yt_progress.set(0)
+        self.yt_status.configure(text=f"Starting {fmt.upper()} download…", text_color=MUTED)
+        threading.Thread(
+            target=self._youtube_worker, args=(url, fmt, folder), daemon=True
+        ).start()
+
+    def _youtube_worker(self, url: str, fmt: str, folder: str):
+        try:
+            out = download_youtube(url, fmt, folder, progress_hook=self._yt_hook)
+            self.after(0, self._youtube_done, url, out, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._youtube_done, url, None, exc)
+
+    def _yt_hook(self, d: dict):
+        # Runs on the worker thread; marshal everything to the UI thread.
+        status = d.get("status")
+        if status == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            done = d.get("downloaded_bytes", 0)
+            if total:
+                self.after(0, self._yt_progress_set, done / total,
+                           f"Downloading… {int(done / total * 100)}%")
+            else:
+                self.after(0, self._yt_progress_set, None, "Downloading…")
+        elif status == "finished":
+            self.after(0, self._yt_progress_set, 1.0, "Processing with ffmpeg…")
+
+    def _yt_progress_set(self, frac, text):
+        if frac is None:
+            if self.yt_progress.cget("mode") != "indeterminate":
+                self.yt_progress.configure(mode="indeterminate")
+                self.yt_progress.start()
+        else:
+            if self.yt_progress.cget("mode") != "determinate":
+                self.yt_progress.stop()
+                self.yt_progress.configure(mode="determinate")
+            self.yt_progress.set(frac)
+        if text:
+            self.yt_status.configure(text=text, text_color=MUTED)
+
+    def _youtube_done(self, url: str, out: Path | None, error: Exception | None):
+        self.yt_progress.stop()
+        self.yt_progress.grid_remove()
+        self.yt_progress.configure(mode="determinate")
+        self.yt_progress.set(0)
+        self.yt_btn.configure(state="normal")
+        if error:
+            self.yt_status.configure(text=f"✕  {error}", text_color=ERROR)
+            self.add_history(url, None, False, error)
+        else:
+            self.yt_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
+            self.add_history(url, out, True)
+
 
 def _run_cli(args) -> int:
-    """Headless conversion mode: --convert FILE FORMAT. Returns an exit code."""
+    """Headless mode: --convert FILE FORMAT or --download URL FORMAT. Returns an exit code."""
     import argparse
 
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Bu D3eij file converter")
@@ -1241,11 +1427,24 @@ def _run_cli(args) -> int:
         "--convert", nargs=2, metavar=("FILE", "FORMAT"),
         help="Convert FILE to FORMAT (e.g. --convert photo.png jpg) and exit.",
     )
+    parser.add_argument(
+        "--download", nargs=2, metavar=("URL", "FORMAT"),
+        help="Download URL as FORMAT (mp3/mp4) into the current folder and exit.",
+    )
     ns = parser.parse_args(args)
     if ns.convert:
         src, target = ns.convert
         try:
             out = convert_file(src, target)
+            print(f"Saved: {out}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.download:
+        url, fmt = ns.download
+        try:
+            out = download_youtube(url, fmt, os.getcwd())
             print(f"Saved: {out}")
             return 0
         except Exception as exc:  # noqa: BLE001

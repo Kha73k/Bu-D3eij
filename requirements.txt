@@ -11,4 +11,5 @@ python-pptx>=1.0.2
 pymupdf4llm>=0.0.17
 mammoth>=1.8.0
 markdownify>=0.13.1
+yt-dlp>=2025.1.1
 pywin32>=306 ; platform_system == "Windows"

@@ -4,13 +4,37 @@ Running log of what's done and what's next. Update at the end of each session.
 
 _Last updated: 2026-06-08_
 
-## Status: working app + standalone exe — v1.2
+## Status: working app + standalone exe — v1.3
 
 Core app, all required conversions, Recent history, Batch Convert, and a
 packaged one-folder exe are complete and verified. v1.1 adds PowerPoint (.pptx)
-input and Markdown (.md) output; v1.2 is a bug-fix/cleanup pass.
+input and Markdown (.md) output; v1.2 is a bug-fix/cleanup pass; v1.3 adds
+YouTube downloads and a sun/moon appearance toggle.
+
+The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
+(branch `main`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-08 — v1.3: YouTube downloads + sun/moon toggle
+- **Sun/moon appearance toggle** (sidebar): replaced the System/Light/Dark
+  `CTkOptionMenu` with a compact toggle button (`_toggle_appearance`,
+  `SUN_GLYPH`/`MOON_GLYPH` in "Segoe UI Symbol"). Verified visually in both
+  modes (screenshots).
+- **YouTube page** (`_build_youtube`): paste a URL, pick MP4/MP3 (segmented),
+  download. Asks for the save folder each time; live progress via a yt-dlp
+  `progress_hook` marshalled to the UI thread; results recorded in Recent.
+  `download_youtube(url, fmt, out_dir, hook)` uses yt-dlp + ffmpeg (mp3 =
+  FFmpegExtractAudio 192 kbps, mp4 = bestvideo+bestaudio merged).
+- **CLI `--download URL FORMAT`** added (mirrors `--convert`; enables frozen-exe
+  testing of yt-dlp).
+- **Dep added:** yt-dlp. Build command gains `--collect-all yt_dlp` (its ~1800
+  extractors load lazily and are missed by static analysis).
+- Verified: GUI smoke test (YouTube page builds, nav OK), real end-to-end
+  downloads (MP3 457 KB + MP4 534 KB of "Me at the zoo"), and a visual check of
+  the page. `APP_VERSION = "1.3"`.
+- **Repo:** initialized git, `.gitignore` (excludes `.venv`/`dist`/`build`/
+  `.claude`/`_verify_*`), pushed to the new private GitHub repo.
 
 ### 2026-06-08 — v1.2: bug fixes + cleanup
 - **Drop-zone overflow (reported):** long file names spilled past the Converter

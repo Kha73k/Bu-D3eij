@@ -5,6 +5,30 @@ This project follows a simple `MAJOR.MINOR` versioning scheme.
 
 ---
 
+## v1.3 — 2026-06-08
+
+Adds YouTube downloads and a nicer appearance toggle.
+
+### Added
+- **YouTube downloads** — a new **YouTube** page: paste a video link, choose
+  **MP4** (best video+audio, merged) or **MP3** (192 kbps audio), and download.
+  You're asked where to save each download, and progress is shown live.
+  Results are recorded in **Recent**. (Uses `yt-dlp`; needs FFmpeg, same as the
+  audio/video conversions.)
+- **Headless `--download`** — `Bu D3eij.exe --download <URL> <mp3|mp4>` saves to
+  the current folder (mirrors `--convert`).
+
+### Changed
+- **Appearance switch is now a sun/moon toggle button** in the sidebar
+  (☀ in dark mode → click for light, ☾ in light mode → click for dark),
+  replacing the System/Light/Dark dropdown.
+
+### Notes
+- Downloading copyrighted content may be against YouTube's Terms of Service —
+  use this for content you have the right to download.
+
+---
+
 ## v1.2 — 2026-06-08
 
 Bug-fix and polish release — cleanup pass before the next round of features.
