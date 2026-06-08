@@ -530,7 +530,9 @@ DROP_BORDER = ("#E11414", "#B4000C")
 SUCCESS = "#1FA85B"
 ERROR = "#F0282D"
 MUTED = ("#6B6164", "#9C9194")
-APP_VERSION = "1.2"
+SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
+MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
+APP_VERSION = "1.3"
 
 ctk.set_appearance_mode("Dark")
 try:
@@ -554,6 +556,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.export_dir: Path | None = None
         self.batch_files: list[Path] = []
         self.history: list[dict] = load_history()
+        self.appearance_mode = "Dark"  # toggled by the sun/moon button
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -617,12 +620,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             btn.grid(row=i, column=0, padx=12, pady=4, sticky="ew")
             self.nav_buttons[name] = btn
 
-        mode = ctk.CTkOptionMenu(
-            sidebar, values=["System", "Light", "Dark"],
-            command=ctk.set_appearance_mode,
+        # Sun / moon appearance toggle (shows the mode you can switch to).
+        self.theme_toggle = ctk.CTkButton(
+            sidebar, text=SUN_GLYPH, width=44, height=36, corner_radius=18,
+            font=ctk.CTkFont(family="Segoe UI Symbol", size=18),
+            fg_color="transparent", border_width=1, border_color=MUTED,
+            hover_color=RED_HOVER, text_color=NAV_TEXT,
+            command=self._toggle_appearance,
         )
-        mode.set("Dark")
-        mode.grid(row=len(NAV_ITEMS) + 2, column=0, padx=15, pady=20, sticky="s")
+        self.theme_toggle.grid(row=len(NAV_ITEMS) + 2, column=0, padx=15, pady=20, sticky="s")
 
     def _build_frames(self):
         container = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
@@ -653,6 +659,14 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             )
         if name == "Recent":
             self._refresh_recent()
+
+    def _toggle_appearance(self):
+        """Flip between Dark and Light; the icon shows the mode you can switch to."""
+        self.appearance_mode = "Light" if self.appearance_mode == "Dark" else "Dark"
+        ctk.set_appearance_mode(self.appearance_mode)
+        self.theme_toggle.configure(
+            text=SUN_GLYPH if self.appearance_mode == "Dark" else MOON_GLYPH
+        )
 
     def _section_header(self, parent, title: str, subtitle: str = ""):
         head = ctk.CTkFrame(parent, fg_color="transparent")
