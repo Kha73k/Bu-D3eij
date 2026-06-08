@@ -4,16 +4,15 @@ Running log of what's done and what's next. Update at the end of each session.
 
 _Last updated: 2026-06-08_
 
-## Status: working app — v2.0 (Marquee) — exe not yet rebuilt for v2.0
+## Status: working app + standalone exe — v2.0 (Marquee)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, and now a **Marquee** image-editing section (Background Remover) are
-complete and verified **from source**. v1.1 = PowerPoint + Markdown; v1.2 = bug
-fixes; v1.3 = YouTube downloads + sun/moon toggle; v1.4 = visual redesign
-(file-type icons, hero Home, table Recent); v1.4.5 = animated "Convert Now"
-button; **v2.0 = Marquee / Background Remover (rembg)**. The standalone exe is
-still the 1.4.5 build — it needs a build-command change before a v2.0 rebuild
-(see Backlog + the CLAUDE.md "v2.0 build delta" note).
+complete and verified — **both from source and in the rebuilt standalone exe**.
+v1.1 = PowerPoint + Markdown; v1.2 = bug fixes; v1.3 = YouTube downloads +
+sun/moon toggle; v1.4 = visual redesign (file-type icons, hero Home, table
+Recent); v1.4.5 = animated "Convert Now" button; **v2.0 = Marquee / Background
+Remover (rembg)**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
@@ -41,7 +40,19 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
   → RGBA output, alpha extrema (0,255), background corner alpha 0 / subject center
   alpha 255; GUI smoke (Marquee nav appears, page builds, active pill red, all
   frames switch with no errors, button disabled with no file); file validation
-  (image enables the button, a .txt is rejected). **Exe not rebuilt** — see Backlog.
+  (image enables the button, a .txt is rejected).
+- **CLI:** added `--remove-bg FILE` (mirrors `--convert`/`--download`) so the
+  frozen exe's background remover can be smoke-tested headlessly.
+- **Exe rebuilt + verified (3/3 in the frozen build):** applied the build delta —
+  dropped `--exclude-module onnxruntime`, added `--collect-all rembg
+  --collect-all onnxruntime` (kept the `pymupdf.layout`/`rapidocr` excludes), and
+  added **`--copy-metadata pymatting`** after the first rebuild died with *"No
+  package metadata was found for pymatting"* (rembg imports pymatting, whose
+  `__init__` reads its own dist-info). Frozen `--remove-bg` → transparent RGBA PNG;
+  frozen `--convert doc.pdf md` → real `#` heading (pymupdf4llm structure-aware,
+  proving the trap-fix survived); GUI launches with no startup crash. The u2net
+  model is **not** bundled (mirrors the ffmpeg decision — downloaded/cached on
+  first use). CLAUDE.md build command + notes updated to match.
 
 ### 2026-06-08 — v1.4.5: animated Convert Now button
 - New `GradientButton(ctk.CTkFrame)` widget (defined just above `class App`) —
@@ -221,12 +232,9 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 - Created a **Desktop shortcut** to `dist\Bu D3eij\Bu D3eij.exe`.
 
 ## Backlog / next steps
-- [ ] **Rebuild the standalone exe for v2.0** (Marquee/Background Remover). Apply
-      the "v2.0 build delta" in CLAUDE.md: drop `--exclude-module onnxruntime`
-      (keep the `pymupdf.layout` + `rapidocr_onnxruntime` excludes), add
-      `--collect-all rembg --collect-all onnxruntime`, and decide model handling
-      (first-run download vs bundling `~/.u2net/u2net.onnx`, ~176 MB). Then verify
-      PDF→MD still works (the trap-fix must survive).
+- [ ] Optional: bundle the u2net model into the exe (`--add-data` + `U2NET_HOME`)
+      so the Background Remover works fully offline on a fresh machine (~176 MB);
+      currently relies on rembg's first-run download/cache, like ffmpeg.
 - [ ] Optional: Marquee polish — live before/after preview thumbnail; a dedicated
       "wand"/"scissors" nav icon via `tools/fetch_icons.py`; more rembg models /
       alpha-matting toggle.

@@ -2,6 +2,7 @@
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import copy_metadata
 
 datas = [('AppLogo.ico', '.'), ('DashboardLogo.png', '.'), ('bud3eij_theme.json', '.'), ('assets', 'assets')]
 binaries = []
@@ -11,6 +12,8 @@ datas += collect_data_files('pdfplumber')
 datas += collect_data_files('docx')
 datas += collect_data_files('pdf2docx')
 datas += collect_data_files('reportlab')
+datas += copy_metadata('pymatting')
+datas += copy_metadata('rembg')
 hiddenimports += collect_submodules('pymupdf4llm')
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
@@ -26,6 +29,10 @@ tmp_ret = collect_all('bs4')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('yt_dlp')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('rembg')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('onnxruntime')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
@@ -37,7 +44,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['pymupdf.layout', 'onnxruntime', 'rapidocr_onnxruntime'],
+    excludes=['pymupdf.layout', 'rapidocr_onnxruntime'],
     noarchive=False,
     optimize=0,
 )

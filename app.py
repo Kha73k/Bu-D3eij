@@ -2193,7 +2193,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
 
 def _run_cli(args) -> int:
-    """Headless mode: --convert FILE FORMAT or --download URL FORMAT. Returns an exit code."""
+    """Headless mode: --convert, --download, or --remove-bg. Returns an exit code."""
     import argparse
 
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Bu D3eij file converter")
@@ -2204,6 +2204,10 @@ def _run_cli(args) -> int:
     parser.add_argument(
         "--download", nargs=2, metavar=("URL", "FORMAT"),
         help="Download URL as FORMAT (mp3/mp4) into the current folder and exit.",
+    )
+    parser.add_argument(
+        "--remove-bg", metavar="FILE",
+        help="Remove FILE's background, save a transparent PNG next to it, and exit.",
     )
     ns = parser.parse_args(args)
     if ns.convert:
@@ -2219,6 +2223,14 @@ def _run_cli(args) -> int:
         url, fmt = ns.download
         try:
             out = download_youtube(url, fmt, os.getcwd())
+            print(f"Saved: {out}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.remove_bg:
+        try:
+            out = remove_background(ns.remove_bg)
             print(f"Saved: {out}")
             return 0
         except Exception as exc:  # noqa: BLE001

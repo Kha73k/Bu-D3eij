@@ -34,6 +34,9 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
 # Headless conversion (also works on the exe)
 .\.venv\Scripts\python app.py --convert "C:\path\photo.png" jpg
 
+# Headless background removal -> transparent PNG (also works on the exe)
+.\.venv\Scripts\python app.py --remove-bg "C:\path\photo.png"
+
 # Install / update deps
 .\.venv\Scripts\python -m pip install -r requirements.txt
 
@@ -48,21 +51,28 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
   --collect-data docx --collect-data pdf2docx --collect-data reportlab `
   --collect-submodules pymupdf4llm --hidden-import tabulate `
   --collect-all yt_dlp `
-  --exclude-module pymupdf.layout --exclude-module onnxruntime --exclude-module rapidocr_onnxruntime `
+  --collect-all rembg --collect-all onnxruntime --copy-metadata pymatting --copy-metadata rembg `
+  --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
 
-> **⚠ v2.0 build delta — NOT yet applied (the exe has not been rebuilt for v2.0).**
-> The command above is the verified **1.x** command and would break the new
-> Background Remover, because rembg needs **onnxruntime at runtime**. Before the
-> next exe rebuild:
-> - **Remove** `--exclude-module onnxruntime` (rembg requires it).
+> **v2.0 Background Remover (rembg) build notes — already applied above:**
+> - **rembg needs `onnxruntime` at runtime**, so the old `--exclude-module
+>   onnxruntime` was removed and `--collect-all rembg --collect-all onnxruntime`
+>   added.
 > - **Keep** `--exclude-module pymupdf.layout` and `--exclude-module
->   rapidocr_onnxruntime` — `pymupdf.layout` (not onnxruntime) is the real PDF→MD
->   trap-fix, so dropping only the onnxruntime exclude keeps PDF→MD correct.
-> - Add `--collect-all rembg --collect-all onnxruntime`.
-> - Handle the model: rely on rembg's first-run download, or bundle
->   `%USERPROFILE%\.u2net\u2net.onnx` via `--add-data` (adds ~176 MB).
+>   rapidocr_onnxruntime` — `pymupdf.layout` (NOT onnxruntime) is the real PDF→MD
+>   trap-fix, so dropping only the onnxruntime exclude keeps PDF→MD structure-aware.
+> - **`--copy-metadata pymatting` is required:** rembg imports `pymatting` at
+>   import time, and `pymatting/__init__.py` calls `importlib.metadata.version(...)`
+>   on itself — without its dist-info the frozen exe dies with *"No package metadata
+>   was found for pymatting"*. (`--collect-all` copies code/data but NOT metadata.)
+>   `--copy-metadata rembg` is kept defensively.
+> - **The u2net model is NOT bundled** (mirrors the ffmpeg decision): rembg
+>   downloads `%USERPROFILE%\.u2net\u2net.onnx` (~176 MB) on first use and caches
+>   it. To make the exe fully offline on a fresh machine, add
+>   `--add-data "%USERPROFILE%\.u2net\u2net.onnx;u2net"` and point `U2NET_HOME` at
+>   that bundled dir before importing rembg.
 
 ## Verifying changes (no formal test suite in repo yet)
 - **Conversions (headless):** `import app`, generate samples (PIL image,
@@ -71,8 +81,10 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
   Run with the venv python; prepend the ffmpeg bin to PATH first.
 - **GUI:** construct `app.App()`, call `update()`, switch frames via
   `show_frame(...)`, then `after(300, destroy); mainloop()`.
-- **Frozen exe:** run `dist\Bu D3eij\Bu D3eij.exe --convert <file> <fmt>` and
-  check the output file (proves bundled modules/data work, not just startup).
+- **Frozen exe:** run `dist\Bu D3eij\Bu D3eij.exe --convert <file> <fmt>` (and
+  `--remove-bg <image>`, `--download <url> <fmt>`) and check the output file
+  (proves bundled modules/data work, not just startup). For the Background
+  Remover this is the key check — it exercises the rembg/onnxruntime bundle.
 
 ## Architecture / key code (`app.py`)
 - **Format model:** `IMAGE_EXTS`/`DOC_EXTS`/`PRESENTATION_EXTS`/`AV_EXTS`, and
@@ -159,9 +171,10 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
   (`load_history`/`save_history`, cap `MAX_HISTORY`). `add_history()` mutates the
   shared `self.history`, so off the main thread it must be called via
   `self.after(0, self.add_history, ...)` (both the single and batch paths do).
-- **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT` and
-  `--download URL FORMAT` (mp3/mp4, saves to cwd) run headless; no flags → GUI.
-  Both double as the way to smoke-test the frozen exe.
+- **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT`,
+  `--download URL FORMAT` (mp3/mp4, saves to cwd), and `--remove-bg FILE`
+  (transparent PNG next to the source) run headless; no flags → GUI. All three
+  double as the way to smoke-test the frozen exe.
 - **Branding/assets:** `resource_path()` resolves bundled files in dev and in
   the frozen exe (`sys._MEIPASS`). Window + exe icon = `AppLogo.ico`; in-app
   logo (sidebar header + Home banner) = `DashboardLogo.png` loaded via
