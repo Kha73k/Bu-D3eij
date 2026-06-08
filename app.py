@@ -582,11 +582,49 @@ def download_youtube(url: str, fmt: str, out_dir, progress_hook=None) -> Path:
     return out
 
 
+# Lazily-created rembg session — the u2net model is loaded once, then reused.
+_REMBG_SESSION = None
+
+
+def remove_background(src, out_path=None) -> Path:
+    """Remove an image's background and save a transparent PNG; return its path.
+
+    Uses rembg (u2net model). `src` must be an image; the output is always saved
+    as PNG (the only supported image format that preserves transparency). Like
+    `download_youtube`, this lives outside `convert_file`/`CONVERSIONS` — it has
+    no target format to choose.
+    """
+    from PIL import Image
+    from rembg import new_session, remove  # lazy: heavy (onnxruntime + model)
+
+    src = Path(src)
+    ext = src.suffix.lower().lstrip(".")
+    if ext not in IMAGE_EXTS:
+        raise ConversionError(f"Background removal needs an image; got .{ext or '?'}")
+
+    global _REMBG_SESSION
+    try:
+        if _REMBG_SESSION is None:
+            # Downloads ~176 MB u2net.onnx on first use, then caches in ~/.u2net.
+            _REMBG_SESSION = new_session("u2net")
+        with Image.open(src) as im:
+            result = remove(im.convert("RGBA"), session=_REMBG_SESSION)
+    except Exception as exc:  # noqa: BLE001
+        raise ConversionError(f"Background removal failed: {exc}") from exc
+
+    out = Path(out_path) if out_path else src.with_name(f"{src.stem}_no-bg.png")
+    if out.suffix.lower() != ".png":
+        out = out.with_suffix(".png")  # transparency requires PNG
+    out = unique_path(out)             # never clobber an existing file
+    result.save(out, "PNG")
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # GUI
 # --------------------------------------------------------------------------- #
 APP_NAME = "Bu D3eij"
-NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "YouTube", "Tools"]
+NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "YouTube", "Marquee", "Tools"]
 
 # Logo-derived palette (extracted from AppLogo.png).
 RED = "#E11414"
@@ -606,7 +644,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "1.4.5"
+APP_VERSION = "2.0"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -625,7 +663,8 @@ def icon_key_for_ext(ext: str) -> str:
 # Nav label -> UI icon (assets/ui/<name>.png).
 NAV_ICONS = {
     "Home": "house", "Converter": "repeat", "Recent": "clock",
-    "Batch Convert": "layers", "YouTube": "youtube", "Tools": "wrench",
+    "Batch Convert": "layers", "YouTube": "youtube", "Marquee": "sparkles",
+    "Tools": "wrench",
 }
 
 ctk.set_appearance_mode("Dark")
@@ -1015,6 +1054,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.selected_file: Path | None = None
         self.export_dir: Path | None = None
         self.batch_files: list[Path] = []
+        self.marquee_file: Path | None = None
         self.history: list[dict] = load_history()
         self.appearance_mode = "Dark"  # toggled by the sun/moon button
         self._icon_cache: dict = {}  # (kind, name, size, colors) -> CTkImage
@@ -1157,6 +1197,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             "Converter": self._build_converter(container),
             "Batch Convert": self._build_batch(container),
             "YouTube": self._build_youtube(container),
+            "Marquee": self._build_marquee(container),
             "Home": self._build_home(container),
             "Recent": self._build_recent(container),
             "Tools": self._build_tools(container),
@@ -1994,6 +2035,161 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         else:
             self.yt_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
             self.add_history(url, out, True)
+
+    # ---- marquee (image editing) view ------------------------------------ #
+    def _build_marquee(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+        self._section_header(
+            frame, "Marquee",
+            "Remove an image background — export a clean transparent PNG.",
+        )
+
+        # ---- drop zone ----
+        self.mq_drop = ctk.CTkFrame(
+            frame, height=200, corner_radius=14, border_width=2, border_color=DROP_BORDER
+        )
+        self.mq_drop.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 14))
+        self.mq_drop.grid_propagate(False)
+        self.mq_drop.grid_columnconfigure(0, weight=1)
+        self.mq_drop.grid_rowconfigure(0, weight=1)
+        inner = ctk.CTkFrame(self.mq_drop, fg_color="transparent")
+        inner.grid(row=0, column=0)
+        self.mq_drop_icon = self._ui_icon("sparkles", 46, light=RED, dark=RED_BRIGHT)
+        self.mq_icon_label = ctk.CTkLabel(inner, text="", image=self.mq_drop_icon)
+        self.mq_icon_label.pack(pady=(0, 8))
+        self.mq_primary = ctk.CTkLabel(
+            inner, text="Drag & drop an image here",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        )
+        self.mq_primary.pack()
+        self.mq_secondary = ctk.CTkLabel(inner, text="or click to browse", text_color=MUTED)
+        self.mq_secondary.pack(pady=(2, 0))
+        self._register_drop(
+            self.mq_drop,
+            (self.mq_drop, inner, self.mq_icon_label, self.mq_primary, self.mq_secondary),
+            self.on_marquee_drop, self.browse_marquee,
+        )
+        self._make_labels_wrap(self.mq_drop, (self.mq_primary, self.mq_secondary))
+
+        # ---- controls card ----
+        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 12))
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card, text="Drops the background and keeps your subject on a fully "
+                       "transparent canvas. Output is always a PNG.",
+            text_color=MUTED, anchor="w", justify="left", wraplength=620,
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+        self.mq_btn = ctk.CTkButton(
+            card, text=" Remove Background", height=46,
+            font=ctk.CTkFont(size=15, weight="bold"),
+            image=self._ui_icon("sparkles", 18, "#FFFFFF", "#FFFFFF"), compound="left",
+            command=self.on_marquee_remove, state="disabled",
+        )
+        self.mq_btn.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 16))
+
+        self.mq_progress = ctk.CTkProgressBar(frame, height=8)
+        self.mq_progress.set(0)
+        self.mq_progress.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.mq_progress.grid_remove()  # only shown while processing
+
+        self.mq_status = ctk.CTkLabel(
+            frame, text="Drop an image to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.mq_status.grid(row=4, column=0, sticky="w", padx=24, pady=(4, 16))
+        return frame
+
+    # ---- marquee actions ------------------------------------------------- #
+    def on_marquee_drop(self, event):
+        paths = self._parse_drop(event)
+        if paths:
+            self.set_marquee_file(paths[0])
+
+    def browse_marquee(self):
+        path = filedialog.askopenfilename(
+            title="Select an image",
+            filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tiff"),
+                       ("All files", "*.*")],
+        )
+        if path:
+            self.set_marquee_file(Path(path))
+
+    def set_marquee_file(self, path: Path):
+        if not path.is_file():
+            self.mq_status.configure(text="Please drop a single image.", text_color="orange")
+            return
+        ext = detect_format(path)
+        self.mq_primary.configure(text=path.name)
+        if ext not in IMAGE_EXTS:
+            self.marquee_file = None
+            if self.mq_drop_icon is not None:
+                self.mq_icon_label.configure(image=self.mq_drop_icon)
+            self.mq_secondary.configure(text="Not an image  ·  click to choose another")
+            self.mq_btn.configure(state="disabled")
+            self.mq_status.configure(
+                text=f"Unsupported file: .{ext or '?'} — pick an image.", text_color="orange")
+            return
+        self.marquee_file = path
+        try:
+            size = human_size(path.stat().st_size)
+        except OSError:
+            size = "?"
+        ft_icon = self._filetype_icon(ext, 52)
+        if ft_icon is not None:
+            self.mq_icon_label.configure(image=ft_icon)
+        self.mq_secondary.configure(text=f"Image  ·  {size}  ·  click to choose another")
+        self.mq_btn.configure(state="normal")
+        self.mq_status.configure(
+            text=f"Ready to remove the background from {path.name}", text_color=MUTED)
+
+    def on_marquee_remove(self):
+        src = self.marquee_file
+        if not src:
+            return
+        out = filedialog.asksaveasfilename(
+            title="Save transparent PNG as",
+            defaultextension=".png",
+            initialfile=f"{src.stem}_no-bg.png",
+            filetypes=[("PNG image", "*.png")],
+        )
+        if not out:
+            self.mq_status.configure(
+                text="Cancelled (no save location chosen).", text_color=MUTED)
+            return
+        self.mq_btn.configure(state="disabled")
+        self.mq_progress.grid()
+        self.mq_progress.configure(mode="indeterminate")
+        self.mq_progress.start()
+        self.mq_status.configure(
+            text="Removing background… (the first run loads a ~176 MB model)",
+            text_color=MUTED,
+        )
+        threading.Thread(
+            target=self._marquee_worker, args=(src, Path(out)), daemon=True
+        ).start()
+
+    def _marquee_worker(self, src: Path, out: Path):
+        try:
+            result = remove_background(src, out)
+            self.after(0, self._marquee_done, src, result, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._marquee_done, src, None, exc)
+
+    def _marquee_done(self, src: Path, out: Path | None, error: Exception | None):
+        self.mq_progress.stop()
+        self.mq_progress.grid_remove()
+        self.mq_progress.configure(mode="determinate")
+        self.mq_progress.set(0)
+        self.mq_btn.configure(state="normal")
+        if error:
+            self.mq_status.configure(text=f"✕  {error}", text_color=ERROR)
+            self.add_history(src, None, False, error)
+        else:
+            self.mq_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
+            self.add_history(src, out, True)
 
 
 def _run_cli(args) -> int:

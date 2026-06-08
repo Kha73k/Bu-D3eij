@@ -4,18 +4,44 @@ Running log of what's done and what's next. Update at the end of each session.
 
 _Last updated: 2026-06-08_
 
-## Status: working app + standalone exe — v1.4.5
+## Status: working app — v2.0 (Marquee) — exe not yet rebuilt for v2.0
 
-Core app, all required conversions, Recent history, Batch Convert, and a
-packaged one-folder exe are complete and verified. v1.1 = PowerPoint + Markdown;
-v1.2 = bug fixes; v1.3 = YouTube downloads + sun/moon toggle; v1.4 = visual
-redesign (file-type icons, hero Home, table Recent); v1.4.5 = animated
-"Convert Now" button.
+Core app, all required conversions, Recent history, Batch Convert, YouTube
+downloads, and now a **Marquee** image-editing section (Background Remover) are
+complete and verified **from source**. v1.1 = PowerPoint + Markdown; v1.2 = bug
+fixes; v1.3 = YouTube downloads + sun/moon toggle; v1.4 = visual redesign
+(file-type icons, hero Home, table Recent); v1.4.5 = animated "Convert Now"
+button; **v2.0 = Marquee / Background Remover (rembg)**. The standalone exe is
+still the 1.4.5 build — it needs a build-command change before a v2.0 rebuild
+(see Backlog + the CLAUDE.md "v2.0 build delta" note).
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-08 — v2.0: Marquee — Background Remover
+- **New sidebar section "Marquee"** (image editing). Added to `NAV_ITEMS`
+  (before Tools), `NAV_ICONS` (`"Marquee": "sparkles"`, reusing the bundled
+  `assets/ui/sparkles.png` — no new asset/icon toolchain), and the `_build_frames`
+  dict. `show_frame` is generic, so the nav/active-pill highlight works unchanged.
+- **First tool — Background Remover:** drop/select an image → transparent **PNG**
+  saved where the user specifies (`asksaveasfilename`, default `<stem>_no-bg.png`).
+  Module function `remove_background(src, out_path=None)` (rembg, `u2net` model,
+  lazy import) sits outside `convert_file`/`CONVERSIONS` like `download_youtube`;
+  session cached in module-level `_REMBG_SESSION`; reuses `unique_path` so it never
+  clobbers. New view `_build_marquee` mirrors the converter/YouTube pages
+  (drop zone via `_register_drop` + `_make_labels_wrap`, image-only validation,
+  worker thread + `self.after(0, …)` marshalling, indeterminate progress bar,
+  ✓/✕ status, `add_history` → shows in Recent).
+- **Dep added:** `rembg` (its heavy deps — onnxruntime/numpy/opencv-python-headless
+  — were already in the venv). The `u2net.onnx` model (~176 MB) downloads once on
+  first run to `~/.u2net/`. `APP_VERSION = "2.0"`.
+- **Verified from source (3/3):** headless `remove_background` on a generated image
+  → RGBA output, alpha extrema (0,255), background corner alpha 0 / subject center
+  alpha 255; GUI smoke (Marquee nav appears, page builds, active pill red, all
+  frames switch with no errors, button disabled with no file); file validation
+  (image enables the button, a .txt is rejected). **Exe not rebuilt** — see Backlog.
 
 ### 2026-06-08 — v1.4.5: animated Convert Now button
 - New `GradientButton(ctk.CTkFrame)` widget (defined just above `class App`) —
@@ -195,6 +221,15 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 - Created a **Desktop shortcut** to `dist\Bu D3eij\Bu D3eij.exe`.
 
 ## Backlog / next steps
+- [ ] **Rebuild the standalone exe for v2.0** (Marquee/Background Remover). Apply
+      the "v2.0 build delta" in CLAUDE.md: drop `--exclude-module onnxruntime`
+      (keep the `pymupdf.layout` + `rapidocr_onnxruntime` excludes), add
+      `--collect-all rembg --collect-all onnxruntime`, and decide model handling
+      (first-run download vs bundling `~/.u2net/u2net.onnx`, ~176 MB). Then verify
+      PDF→MD still works (the trap-fix must survive).
+- [ ] Optional: Marquee polish — live before/after preview thumbnail; a dedicated
+      "wand"/"scissors" nav icon via `tools/fetch_icons.py`; more rembg models /
+      alpha-matting toggle.
 - [ ] Optional: Windows "Send to → Convert" shell entry.
 - [ ] Make **Tools** tab functional (e.g. ffmpeg status check, open output folder,
       appearance settings).

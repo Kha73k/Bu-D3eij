@@ -8,6 +8,8 @@ Bu D3eij is a Windows desktop **file converter** (documents, images, audio/video
 built with **CustomTkinter** + **tkinterdnd2** drag-and-drop. Single-file app
 (`app.py`): conversion logic is plain module-level functions (importable and
 testable without the GUI); the `App` class is a thin GUI layer on top.
+**v2.0** opens a second direction — an image-editing area called **Marquee**;
+its first tool is a **Background Remover** (rembg) that exports a transparent PNG.
 
 ## Environment (important)
 - **Runtime is the Python 3.11 venv at `.venv`** — always use it:
@@ -50,6 +52,18 @@ testable without the GUI); the `App` class is a thin GUI layer on top.
   --hidden-import win32timezone app.py
 ```
 
+> **⚠ v2.0 build delta — NOT yet applied (the exe has not been rebuilt for v2.0).**
+> The command above is the verified **1.x** command and would break the new
+> Background Remover, because rembg needs **onnxruntime at runtime**. Before the
+> next exe rebuild:
+> - **Remove** `--exclude-module onnxruntime` (rembg requires it).
+> - **Keep** `--exclude-module pymupdf.layout` and `--exclude-module
+>   rapidocr_onnxruntime` — `pymupdf.layout` (not onnxruntime) is the real PDF→MD
+>   trap-fix, so dropping only the onnxruntime exclude keeps PDF→MD correct.
+> - Add `--collect-all rembg --collect-all onnxruntime`.
+> - Handle the model: rely on rembg's first-run download, or bundle
+>   `%USERPROFILE%\.u2net\u2net.onnx` via `--add-data` (adds ~176 MB).
+
 ## Verifying changes (no formal test suite in repo yet)
 - **Conversions (headless):** `import app`, generate samples (PIL image,
   reportlab PDF, python-docx DOCX, `wave` WAV, ffmpeg for MP4) in a temp dir,
@@ -84,8 +98,21 @@ testable without the GUI); the `App` class is a thin GUI layer on top.
   GUI **YouTube** page (`_build_youtube` + `on_youtube_download`/`_youtube_worker`/
   `_yt_hook`) and the `--download URL FORMAT` CLI both call it. Output folder is
   asked per-download (filedialog); results go through `add_history`.
-- **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube, Tools)
-  raising stacked frames — all functional. The sidebar foot has a **sun/moon
+- **Marquee → Background Remover (v2.0):** `remove_background(src, out_path=None)`
+  (rembg, lazy import) opens the image, runs the `u2net` model, and saves a
+  transparent **PNG** (output is always PNG — the only listed image format that
+  keeps alpha). Like `download_youtube` it sits **outside** `convert_file`/
+  `CONVERSIONS` (no target-format choice). The session is cached in a module-level
+  `_REMBG_SESSION` (model loaded once). The model (`~/.u2net/u2net.onnx`, ~176 MB)
+  is downloaded by rembg on first use, then cached. The GUI **Marquee** page
+  (`_build_marquee` + `on_marquee_drop`/`browse_marquee`/`set_marquee_file`/
+  `on_marquee_remove`/`_marquee_worker`/`_marquee_done`) validates the drop is an
+  image (`IMAGE_EXTS`), asks the output path per-run via `asksaveasfilename`
+  (defaults `<stem>_no-bg.png`), shows an **indeterminate** progress bar while the
+  worker thread runs (rembg has no progress callback), and records the result via
+  `add_history`. Nav icon reuses the bundled `assets/ui/sparkles.png`.
+- **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube,
+  Marquee, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
   appearance toggle** (`_toggle_appearance`, `SUN_GLYPH`/`MOON_GLYPH` in
   "Segoe UI Symbol"), replacing the old Light/Dark/System dropdown. Each
   `_build_*` view starts with `_section_header(title, subtitle)`; controls sit in

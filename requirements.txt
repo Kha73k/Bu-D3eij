@@ -12,4 +12,5 @@ pymupdf4llm>=0.0.17
 mammoth>=1.8.0
 markdownify>=0.13.1
 yt-dlp>=2025.1.1
+rembg>=2.0.50
 pywin32>=306 ; platform_system == "Windows"
