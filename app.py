@@ -1,0 +1,1251 @@
+"""Bu D3eij — a simple desktop file converter.
+
+A small CustomTkinter app that converts documents, images and audio/video
+files. The conversion logic lives in plain module-level functions so it can be
+imported and tested without launching the GUI.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import traceback
+from datetime import datetime
+from pathlib import Path
+from tkinter import filedialog
+
+import customtkinter as ctk
+from tkinterdnd2 import DND_FILES, TkinterDnD
+
+
+def resource_path(rel: str) -> str:
+    """Absolute path to a bundled resource (works in dev and in a PyInstaller exe)."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+
+# --------------------------------------------------------------------------- #
+# Format model
+# --------------------------------------------------------------------------- #
+IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff"}
+DOC_EXTS = {"pdf", "docx", "txt", "md"}
+PRESENTATION_EXTS = {"pptx"}
+AV_EXTS = {"mp4", "mp3", "wav"}
+
+# input extension -> list of compatible target extensions
+CONVERSIONS: dict[str, list[str]] = {
+    "pdf": ["docx", "txt", "md"],
+    "docx": ["pdf", "txt", "md"],
+    "pptx": ["pdf", "txt", "md"],
+    "jpg": ["png", "webp", "bmp", "gif", "tiff"],
+    "jpeg": ["png", "webp", "bmp", "gif", "tiff"],
+    "png": ["jpg", "webp", "bmp", "gif", "tiff"],
+    "webp": ["png", "jpg", "bmp", "gif", "tiff"],
+    "bmp": ["png", "jpg", "webp", "gif", "tiff"],
+    "gif": ["png", "jpg", "webp", "bmp", "tiff"],
+    "tiff": ["png", "jpg", "webp", "bmp", "gif"],
+    "mp4": ["mp3", "wav"],
+    "mp3": ["wav"],
+    "wav": ["mp3"],
+}
+
+# extension -> Pillow format name
+PILLOW_FORMAT = {
+    "jpg": "JPEG", "jpeg": "JPEG", "png": "PNG", "webp": "WEBP",
+    "bmp": "BMP", "gif": "GIF", "tiff": "TIFF",
+}
+
+
+class ConversionError(Exception):
+    """Raised when a conversion cannot be completed."""
+
+
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+def detect_format(path) -> str:
+    """Return the lower-case extension (without dot) of a path."""
+    return Path(path).suffix.lower().lstrip(".")
+
+
+def compatible_targets(src_ext: str) -> list[str]:
+    """Return the list of formats `src_ext` can be converted to."""
+    return CONVERSIONS.get(src_ext.lower().lstrip("."), [])
+
+
+def unique_path(path: Path) -> Path:
+    """Return a non-existing path by appending ' (n)' before the suffix."""
+    if not path.exists():
+        return path
+    stem, suffix, parent = path.stem, path.suffix, path.parent
+    n = 1
+    while True:
+        candidate = parent / f"{stem} ({n}){suffix}"
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
+def human_size(num: float) -> str:
+    """Human-readable file size, e.g. '1.4 MB'."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if num < 1024 or unit == "GB":
+            return f"{int(num)} {unit}" if unit == "B" else f"{num:.1f} {unit}"
+        num /= 1024
+    return f"{num:.1f} GB"
+
+
+def category_of(ext: str) -> str:
+    """Human label for a file extension's category."""
+    ext = ext.lower().lstrip(".")
+    if ext in IMAGE_EXTS:
+        return "Image"
+    if ext in PRESENTATION_EXTS:
+        return "Presentation"
+    if ext in DOC_EXTS:
+        return "Document"
+    if ext in AV_EXTS:
+        return "Audio / Video"
+    return "File"
+
+
+# --------------------------------------------------------------------------- #
+# Recent-conversion history (persisted under %LOCALAPPDATA%\Bu D3eij)
+# --------------------------------------------------------------------------- #
+APP_DATA_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Bu D3eij"
+HISTORY_FILE = APP_DATA_DIR / "history.json"
+MAX_HISTORY = 100
+
+
+def load_history() -> list[dict]:
+    """Load saved conversion history (newest first). Never raises."""
+    try:
+        data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:  # noqa: BLE001 - missing/corrupt file is fine
+        return []
+
+
+def save_history(history: list[dict]) -> None:
+    """Persist conversion history. Never raises."""
+    try:
+        APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        HISTORY_FILE.write_text(json.dumps(history, indent=2), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        print("Could not save history:", exc)
+
+
+# --------------------------------------------------------------------------- #
+# Converters (each imports its heavy deps lazily for fast startup)
+# --------------------------------------------------------------------------- #
+def convert_image(src: Path, out: Path, target_ext: str) -> None:
+    from PIL import Image
+
+    target_ext = target_ext.lower()
+    fmt = PILLOW_FORMAT.get(target_ext)
+    if not fmt:
+        raise ConversionError(f"Unsupported image target: {target_ext}")
+    with Image.open(str(src)) as img:
+        # Formats without an alpha channel need a flat RGB image.
+        if target_ext in ("jpg", "jpeg", "bmp", "gif") and img.mode in ("RGBA", "LA", "P"):
+            img = img.convert("RGB")
+        img.save(str(out), fmt)
+
+
+def pdf_to_txt(src: Path, out: Path) -> None:
+    import pdfplumber
+
+    parts: list[str] = []
+    with pdfplumber.open(str(src)) as pdf:
+        for page in pdf.pages:
+            parts.append(page.extract_text() or "")
+    out.write_text("\n\n".join(parts), encoding="utf-8")
+
+
+def pdf_to_md(src: Path, out: Path) -> None:
+    """PDF -> Markdown. Uses pymupdf4llm (structure-aware); falls back to plain text."""
+    try:
+        import pymupdf4llm
+
+        # Force the classic text-based engine: the optional "layout" path pulls in
+        # 20 MB of ONNX models + onnxruntime that we deliberately don't bundle.
+        if getattr(pymupdf4llm, "_use_layout", False):
+            pymupdf4llm.use_layout(False)
+        md = pymupdf4llm.to_markdown(str(src))
+    except Exception as exc:  # noqa: BLE001 - fall back to flat text extraction
+        print(f"[pdf_to_md] pymupdf4llm unavailable, using text fallback: {exc!r}",
+              file=sys.stderr)
+        import pdfplumber
+
+        parts: list[str] = []
+        with pdfplumber.open(str(src)) as pdf:
+            for page in pdf.pages:
+                parts.append(page.extract_text() or "")
+        md = "\n\n".join(parts)
+    out.write_text(md, encoding="utf-8")
+
+
+def pdf_to_docx(src: Path, out: Path) -> None:
+    from pdf2docx import Converter
+
+    cv = Converter(str(src))
+    try:
+        cv.convert(str(out))  # all pages, layout-aware
+    finally:
+        cv.close()
+
+
+def docx_to_txt(src: Path, out: Path) -> None:
+    import docx
+
+    document = docx.Document(str(src))
+    out.write_text("\n".join(p.text for p in document.paragraphs), encoding="utf-8")
+
+
+def docx_to_md(src: Path, out: Path) -> None:
+    """DOCX -> Markdown via mammoth (DOCX->HTML) + markdownify (HTML->MD)."""
+    import mammoth
+    from markdownify import markdownify
+
+    with open(src, "rb") as fh:
+        html = mammoth.convert_to_html(fh).value
+    md = markdownify(html, heading_style="ATX").strip()
+    out.write_text(md + "\n", encoding="utf-8")
+
+
+def docx_to_pdf(src: Path, out: Path) -> None:
+    """High-fidelity via MS Word (docx2pdf); falls back to a text-only PDF."""
+    try:
+        _docx_to_pdf_word(src, out)
+    except Exception as word_err:  # noqa: BLE001 - want to fall back on anything
+        try:
+            _docx_to_pdf_reportlab(src, out)
+        except Exception as rl_err:  # noqa: BLE001
+            raise ConversionError(
+                f"DOCX -> PDF failed.\nWord path: {word_err}\nFallback: {rl_err}"
+            ) from rl_err
+
+
+def _docx_to_pdf_word(src: Path, out: Path) -> None:
+    # docx2pdf drives MS Word through COM, which must be initialised on the
+    # current (possibly worker) thread.
+    com_ready = False
+    try:
+        import pythoncom  # provided by pywin32
+
+        pythoncom.CoInitialize()
+        com_ready = True
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from docx2pdf import convert as docx2pdf_convert
+
+        docx2pdf_convert(str(src), str(out))
+    finally:
+        if com_ready:
+            try:
+                import pythoncom
+
+                pythoncom.CoUninitialize()
+            except Exception:  # noqa: BLE001
+                pass
+    if not out.exists():
+        raise ConversionError("docx2pdf produced no output (is Microsoft Word installed?)")
+
+
+def _docx_to_pdf_reportlab(src: Path, out: Path) -> None:
+    from xml.sax.saxutils import escape
+
+    import docx
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    document = docx.Document(str(src))
+    styles = getSampleStyleSheet()
+    story = []
+    for para in document.paragraphs:
+        text = para.text.strip()
+        if text:
+            story.append(Paragraph(escape(text), styles["Normal"]))
+            story.append(Spacer(1, 0.08 * inch))
+    if not story:
+        story.append(Paragraph("(empty document)", styles["Normal"]))
+    doc = SimpleDocTemplate(
+        str(out), pagesize=LETTER,
+        leftMargin=inch, rightMargin=inch, topMargin=inch, bottomMargin=inch,
+    )
+    doc.build(story)
+
+
+def _pptx_table_to_md(table) -> str:
+    """Render a python-pptx table as a GitHub-flavoured Markdown table."""
+    def _cell(text: str) -> str:
+        # Escape pipes and collapse newlines so cells can't break the table.
+        return text.strip().replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+    rows = [[_cell(cell.text) for cell in row.cells] for row in table.rows]
+    if not rows:
+        return ""
+    header, *body = rows
+    lines = ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |"]
+    lines += ["| " + " | ".join(r) + " |" for r in body]
+    return "\n".join(lines)
+
+
+def pptx_to_md(src: Path, out: Path) -> None:
+    """PPTX -> Markdown: one '## Slide' section per slide (text, bullets, tables, notes)."""
+    from pptx import Presentation
+
+    prs = Presentation(str(src))
+    blocks: list[str] = []
+    for i, slide in enumerate(prs.slides, start=1):
+        title_shape = slide.shapes.title
+        title = (title_shape.text.strip() if title_shape and title_shape.text else "") or f"Slide {i}"
+        lines = [f"## {title}", ""]
+        for shape in slide.shapes:
+            if title_shape is not None and shape.shape_id == title_shape.shape_id:
+                continue
+            if shape.has_table:
+                md_table = _pptx_table_to_md(shape.table)
+                if md_table:
+                    lines += [md_table, ""]
+            elif shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        lines.append("  " * (para.level or 0) + f"- {text}")
+                if shape.text_frame.text.strip():
+                    lines.append("")
+        notes = ""
+        if slide.has_notes_slide:
+            notes = slide.notes_slide.notes_text_frame.text.strip()
+        if notes:
+            lines += ["> **Notes:** " + notes.replace("\n", " "), ""]
+        blocks.append("\n".join(lines).rstrip())
+    out.write_text("\n\n---\n\n".join(blocks) + "\n", encoding="utf-8")
+
+
+def pptx_to_txt(src: Path, out: Path) -> None:
+    """PPTX -> plain text: all shape text per slide, blank line between slides."""
+    from pptx import Presentation
+
+    prs = Presentation(str(src))
+    slides: list[str] = []
+    for slide in prs.slides:
+        parts: list[str] = []
+        for shape in slide.shapes:
+            if shape.has_text_frame and shape.text_frame.text.strip():
+                parts.append(shape.text_frame.text.strip())
+            elif shape.has_table:
+                for row in shape.table.rows:
+                    parts.append("\t".join(cell.text.strip() for cell in row.cells))
+        slides.append("\n".join(parts))
+    out.write_text("\n\n".join(slides), encoding="utf-8")
+
+
+def pptx_to_pdf(src: Path, out: Path) -> None:
+    """High-fidelity via MS PowerPoint (COM); falls back to a text-only PDF."""
+    try:
+        _pptx_to_pdf_powerpoint(src, out)
+    except Exception as ppt_err:  # noqa: BLE001 - want to fall back on anything
+        try:
+            _pptx_to_pdf_reportlab(src, out)
+        except Exception as rl_err:  # noqa: BLE001
+            raise ConversionError(
+                f"PPTX -> PDF failed.\nPowerPoint path: {ppt_err}\nFallback: {rl_err}"
+            ) from rl_err
+
+
+def _pptx_to_pdf_powerpoint(src: Path, out: Path) -> None:
+    # PowerPoint is driven through COM, which must be initialised on the current
+    # (possibly worker) thread; PowerPoint also requires absolute paths.
+    com_ready = False
+    try:
+        import pythoncom  # provided by pywin32
+
+        pythoncom.CoInitialize()
+        com_ready = True
+    except Exception:  # noqa: BLE001
+        pass
+    powerpoint = None
+    try:
+        import win32com.client
+
+        powerpoint = win32com.client.Dispatch("PowerPoint.Application")
+        presentation = powerpoint.Presentations.Open(
+            str(src.resolve()), ReadOnly=True, WithWindow=False
+        )
+        try:
+            presentation.SaveAs(str(out.resolve()), 32)  # 32 = ppSaveAsPDF
+        finally:
+            presentation.Close()
+    finally:
+        if powerpoint is not None:
+            try:
+                powerpoint.Quit()
+            except Exception:  # noqa: BLE001
+                pass
+        if com_ready:
+            try:
+                import pythoncom
+
+                pythoncom.CoUninitialize()
+            except Exception:  # noqa: BLE001
+                pass
+    if not out.exists():
+        raise ConversionError(
+            "PowerPoint produced no output (is Microsoft PowerPoint installed?)"
+        )
+
+
+def _pptx_to_pdf_reportlab(src: Path, out: Path) -> None:
+    from xml.sax.saxutils import escape
+
+    from pptx import Presentation
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
+
+    prs = Presentation(str(src))
+    styles = getSampleStyleSheet()
+    slides = list(prs.slides)
+    story = []
+    for i, slide in enumerate(slides, start=1):
+        title_shape = slide.shapes.title
+        title = (title_shape.text.strip() if title_shape and title_shape.text else "") or f"Slide {i}"
+        story.append(Paragraph(escape(title), styles["Heading2"]))
+        story.append(Spacer(1, 0.1 * inch))
+        for shape in slide.shapes:
+            if title_shape is not None and shape.shape_id == title_shape.shape_id:
+                continue
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    text = para.text.strip()
+                    if text:
+                        story.append(Paragraph(escape(text), styles["Normal"]))
+                        story.append(Spacer(1, 0.05 * inch))
+        if i < len(slides):
+            story.append(PageBreak())
+    if not story:
+        story.append(Paragraph("(empty presentation)", styles["Normal"]))
+    doc = SimpleDocTemplate(
+        str(out), pagesize=LETTER,
+        leftMargin=inch, rightMargin=inch, topMargin=inch, bottomMargin=inch,
+    )
+    doc.build(story)
+
+
+def convert_av(src: Path, out: Path, target_ext: str) -> None:
+    import ffmpeg
+
+    if shutil.which("ffmpeg") is None:
+        raise ConversionError(
+            "ffmpeg is not installed or not on PATH. Install it "
+            "(e.g. 'winget install Gyan.FFmpeg') and restart the app."
+        )
+    target_ext = target_ext.lower()
+    src_ext = src.suffix.lower().lstrip(".")
+
+    opts: dict = {}
+    if target_ext == "mp3":
+        opts = {"acodec": "libmp3lame", "b:a": "192k"}
+    elif target_ext == "wav":
+        opts = {"acodec": "pcm_s16le"}
+    if src_ext == "mp4":  # drop the video stream when extracting audio
+        opts["vn"] = None
+
+    stream = ffmpeg.output(ffmpeg.input(str(src)), str(out), **opts)
+    try:
+        ffmpeg.run(stream, overwrite_output=True, quiet=True)
+    except ffmpeg.Error as exc:  # type: ignore[attr-defined]
+        detail = exc.stderr.decode("utf-8", "ignore") if getattr(exc, "stderr", None) else str(exc)
+        raise ConversionError(f"ffmpeg failed: {detail}") from exc
+
+
+def convert_file(src, target_ext: str, out_dir=None) -> Path:
+    """Convert `src` to `target_ext`. Saves to `out_dir` (or next to the source).
+
+    Returns the output path. Never overwrites an existing file.
+    """
+    src = Path(src)
+    if not src.is_file():
+        raise ConversionError(f"File not found: {src}")
+    src_ext = src.suffix.lower().lstrip(".")
+    target_ext = target_ext.lower().lstrip(".")
+    if target_ext not in compatible_targets(src_ext):
+        raise ConversionError(f"Can't convert .{src_ext or '?'} to .{target_ext}")
+
+    out_parent = src.parent
+    if out_dir:
+        out_parent = Path(out_dir)
+        out_parent.mkdir(parents=True, exist_ok=True)
+    out = unique_path(out_parent / f"{src.stem}.{target_ext}")
+    if src_ext in IMAGE_EXTS:
+        convert_image(src, out, target_ext)
+    elif src_ext == "pdf" and target_ext == "docx":
+        pdf_to_docx(src, out)
+    elif src_ext == "pdf" and target_ext == "txt":
+        pdf_to_txt(src, out)
+    elif src_ext == "pdf" and target_ext == "md":
+        pdf_to_md(src, out)
+    elif src_ext == "docx" and target_ext == "pdf":
+        docx_to_pdf(src, out)
+    elif src_ext == "docx" and target_ext == "txt":
+        docx_to_txt(src, out)
+    elif src_ext == "docx" and target_ext == "md":
+        docx_to_md(src, out)
+    elif src_ext == "pptx" and target_ext == "md":
+        pptx_to_md(src, out)
+    elif src_ext == "pptx" and target_ext == "txt":
+        pptx_to_txt(src, out)
+    elif src_ext == "pptx" and target_ext == "pdf":
+        pptx_to_pdf(src, out)
+    elif src_ext in AV_EXTS:
+        convert_av(src, out, target_ext)
+    else:
+        raise ConversionError(f"No converter for .{src_ext} to .{target_ext}")
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# GUI
+# --------------------------------------------------------------------------- #
+APP_NAME = "Bu D3eij"
+NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "Tools"]
+
+# Logo-derived palette (extracted from AppLogo.png).
+RED = "#E11414"
+RED_HOVER = "#B4000C"
+RED_DEEP = "#8C0008"
+RED_BRIGHT = "#F01818"
+SIDEBAR_FG = ("#E4DDDE", "#141011")
+NAV_TEXT = ("#2A2426", "#F2E9EA")
+DROP_BORDER = ("#E11414", "#B4000C")
+SUCCESS = "#1FA85B"
+ERROR = "#F0282D"
+MUTED = ("#6B6164", "#9C9194")
+APP_VERSION = "1.2"
+
+ctk.set_appearance_mode("Dark")
+try:
+    ctk.set_default_color_theme(resource_path("bud3eij_theme.json"))
+except Exception:  # noqa: BLE001 - fall back to a built-in theme
+    ctk.set_default_color_theme("blue")
+
+
+class App(ctk.CTk, TkinterDnD.DnDWrapper):
+    def __init__(self):
+        super().__init__()
+        # Enable native drag & drop on a CustomTkinter root.
+        self.TkdndVersion = TkinterDnD._require(self)
+
+        self.title(APP_NAME)
+        self.geometry("1000x680")
+        self.minsize(880, 600)
+        self._set_window_icon()
+
+        self.selected_file: Path | None = None
+        self.export_dir: Path | None = None
+        self.batch_files: list[Path] = []
+        self.history: list[dict] = load_history()
+
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self._build_sidebar()
+        self._build_frames()
+        self.show_frame("Converter")
+
+    def _set_window_icon(self):
+        self._icon_path = resource_path("AppLogo.ico")
+        if not os.path.exists(self._icon_path):
+            return
+        self._apply_icon()
+        # Re-apply shortly after startup (CustomTkinter sets its own icon late).
+        self.after(300, self._apply_icon)
+
+    def _apply_icon(self):
+        try:
+            if self.winfo_exists():
+                self.iconbitmap(self._icon_path)
+        except Exception as exc:  # noqa: BLE001
+            print("Could not set window icon:", exc)
+
+    def _load_logo(self, name: str, width: int):
+        """Load a logo as a width-scaled CTkImage, or None on failure."""
+        try:
+            from PIL import Image
+
+            img = Image.open(resource_path(name))
+            w, h = img.size
+            return ctk.CTkImage(
+                light_image=img, dark_image=img, size=(width, int(width * h / w))
+            )
+        except Exception as exc:  # noqa: BLE001
+            print("Could not load logo", name, ":", exc)
+            return None
+
+    # ---- layout ---------------------------------------------------------- #
+    def _build_sidebar(self):
+        sidebar = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color=SIDEBAR_FG)
+        sidebar.grid(row=0, column=0, sticky="nsew")
+        sidebar.grid_rowconfigure(len(NAV_ITEMS) + 1, weight=1)
+
+        self.sidebar_logo = self._load_logo("DashboardLogo.png", 160)
+        if self.sidebar_logo is not None:
+            ctk.CTkLabel(sidebar, text="", image=self.sidebar_logo).grid(
+                row=0, column=0, padx=12, pady=(20, 16)
+            )
+        else:
+            ctk.CTkLabel(
+                sidebar, text=APP_NAME, font=ctk.CTkFont(size=20, weight="bold")
+            ).grid(row=0, column=0, padx=20, pady=(20, 12))
+
+        self.nav_buttons: dict[str, ctk.CTkButton] = {}
+        for i, name in enumerate(NAV_ITEMS, start=1):
+            btn = ctk.CTkButton(
+                sidebar, text=name, anchor="w", height=38, corner_radius=8,
+                fg_color="transparent", hover_color=RED_HOVER, text_color=NAV_TEXT,
+                command=lambda n=name: self.show_frame(n),
+            )
+            btn.grid(row=i, column=0, padx=12, pady=4, sticky="ew")
+            self.nav_buttons[name] = btn
+
+        mode = ctk.CTkOptionMenu(
+            sidebar, values=["System", "Light", "Dark"],
+            command=ctk.set_appearance_mode,
+        )
+        mode.set("Dark")
+        mode.grid(row=len(NAV_ITEMS) + 2, column=0, padx=15, pady=20, sticky="s")
+
+    def _build_frames(self):
+        container = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
+        container.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
+
+        self.frames: dict[str, ctk.CTkFrame] = {
+            "Converter": self._build_converter(container),
+            "Batch Convert": self._build_batch(container),
+            "Home": self._build_home(container),
+            "Recent": self._build_recent(container),
+            "Tools": self._build_tools(container),
+        }
+        for frame in self.frames.values():
+            frame.grid(row=0, column=0, sticky="nsew")
+
+    def show_frame(self, name: str):
+        frame = self.frames.get(name)
+        if frame is None:
+            return
+        frame.tkraise()
+        for n, btn in self.nav_buttons.items():
+            active = n == name
+            btn.configure(
+                fg_color=RED if active else "transparent",
+                text_color="#FFFFFF" if active else NAV_TEXT,
+            )
+        if name == "Recent":
+            self._refresh_recent()
+
+    def _section_header(self, parent, title: str, subtitle: str = ""):
+        head = ctk.CTkFrame(parent, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 8))
+        ctk.CTkLabel(
+            head, text=title, font=ctk.CTkFont(size=24, weight="bold"), text_color=RED
+        ).pack(anchor="w")
+        if subtitle:
+            ctk.CTkLabel(head, text=subtitle, text_color=MUTED).pack(anchor="w", pady=(2, 0))
+
+    def _build_home(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+
+        self.home_logo = self._load_logo("DashboardLogo.png", 300)
+        if self.home_logo is not None:
+            ctk.CTkLabel(frame, text="", image=self.home_logo).grid(
+                row=0, column=0, sticky="w", padx=30, pady=(36, 2)
+            )
+        else:
+            ctk.CTkLabel(
+                frame, text=APP_NAME, font=ctk.CTkFont(size=28, weight="bold"),
+                text_color=RED,
+            ).grid(row=0, column=0, sticky="w", padx=30, pady=(36, 2))
+
+        ctk.CTkLabel(
+            frame, text="Convert documents, presentations, images, audio and video — fast.",
+            font=ctk.CTkFont(size=14), text_color=MUTED,
+        ).grid(row=1, column=0, sticky="w", padx=32, pady=(0, 20))
+
+        actions = ctk.CTkFrame(frame, fg_color="transparent")
+        actions.grid(row=2, column=0, sticky="w", padx=30, pady=(0, 22))
+        ctk.CTkButton(
+            actions, text="Convert a File", width=160, height=44,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=lambda: self.show_frame("Converter"),
+        ).grid(row=0, column=0, padx=(0, 12))
+        ctk.CTkButton(
+            actions, text="Batch Convert", width=160, height=44,
+            fg_color="transparent", border_width=2, border_color=RED,
+            text_color=NAV_TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
+            command=lambda: self.show_frame("Batch Convert"),
+        ).grid(row=0, column=1)
+
+        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card.grid(row=3, column=0, sticky="w", padx=30, pady=(0, 20))
+        ctk.CTkLabel(
+            card, text="Supported formats", font=ctk.CTkFont(size=14, weight="bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=20, pady=(14, 8))
+        for r, (cat, fmts) in enumerate(
+            [("Images", "JPG · PNG · WEBP · BMP · GIF · TIFF"),
+             ("Documents", "PDF · DOCX · TXT · MD"),
+             ("Presentations", "PPTX"),
+             ("Audio / Video", "MP4 · MP3 · WAV")],
+            start=1,
+        ):
+            ctk.CTkLabel(
+                card, text=cat, font=ctk.CTkFont(size=12, weight="bold"),
+                text_color=RED, width=110, anchor="w",
+            ).grid(row=r, column=0, sticky="w", padx=(20, 8), pady=2)
+            ctk.CTkLabel(card, text=fmts, text_color=MUTED, anchor="w").grid(
+                row=r, column=1, sticky="w", padx=(0, 20), pady=2
+            )
+        ctk.CTkLabel(card, text="", height=6).grid(row=4, column=0)
+        return frame
+
+    def _build_tools(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+        self._section_header(frame, "Tools", "Status and utilities.")
+
+        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 12))
+        card.grid_columnconfigure(1, weight=1)
+
+        ffmpeg_ok = shutil.which("ffmpeg") is not None
+        rows = [
+            ("FFmpeg (audio / video)",
+             "Available" if ffmpeg_ok else "Not found on PATH",
+             SUCCESS if ffmpeg_ok else "orange"),
+            ("History", f"{len(self.history)} conversion(s) recorded", MUTED),
+            ("Version", f"Bu D3eij {APP_VERSION}", MUTED),
+        ]
+        for r, (label, value, color) in enumerate(rows):
+            top = 14 if r == 0 else 6
+            ctk.CTkLabel(
+                card, text=label, font=ctk.CTkFont(size=12, weight="bold"), anchor="w",
+            ).grid(row=r, column=0, sticky="w", padx=(18, 12), pady=(top, 6))
+            ctk.CTkLabel(card, text=value, text_color=color, anchor="w").grid(
+                row=r, column=1, sticky="w", padx=(0, 18), pady=(top, 6)
+            )
+
+        btns = ctk.CTkFrame(frame, fg_color="transparent")
+        btns.grid(row=2, column=0, sticky="w", padx=24, pady=(2, 12))
+        ctk.CTkButton(
+            btns, text="Open history folder", width=170,
+            command=lambda: self.open_folder(HISTORY_FILE),
+        ).grid(row=0, column=0, padx=(0, 10))
+        ctk.CTkButton(
+            btns, text="Reveal last output", width=170,
+            fg_color="gray50", hover_color="gray40", command=self._open_last_output,
+        ).grid(row=0, column=1)
+        return frame
+
+    def _open_last_output(self):
+        for entry in self.history:
+            if entry.get("ok") and entry.get("output"):
+                self.open_folder(entry["output"])
+                return
+
+    # ---- recent view ----------------------------------------------------- #
+    def _build_recent(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
+        self._section_header(frame, "Recent", "Your conversion history.")
+
+        bar = ctk.CTkFrame(frame, fg_color="transparent")
+        bar.grid(row=1, column=0, sticky="ew", padx=24)
+        bar.grid_columnconfigure(0, weight=1)
+        ctk.CTkButton(
+            bar, text="Clear history", width=120, fg_color="gray50",
+            hover_color="gray40", command=self.clear_history,
+        ).grid(row=0, column=1, sticky="e")
+
+        self.recent_scroll = ctk.CTkScrollableFrame(frame)
+        self.recent_scroll.grid(row=2, column=0, sticky="nsew", padx=24, pady=10)
+        self.recent_scroll.grid_columnconfigure(0, weight=1)
+        self._refresh_recent()
+        return frame
+
+    def _refresh_recent(self):
+        if not hasattr(self, "recent_scroll"):
+            return
+        for child in self.recent_scroll.winfo_children():
+            child.destroy()
+        if not self.history:
+            ctk.CTkLabel(
+                self.recent_scroll, text="No conversions yet."
+            ).grid(row=0, column=0, sticky="w", padx=10, pady=10)
+            return
+        for i, entry in enumerate(self.history):
+            self._recent_row(i, entry)
+
+    def _recent_row(self, i: int, entry: dict):
+        row = ctk.CTkFrame(self.recent_scroll)
+        row.grid(row=i, column=0, sticky="ew", padx=4, pady=4)
+        row.grid_columnconfigure(0, weight=1)
+        src_name = Path(entry.get("source", "")).name or "?"
+        if entry.get("ok"):
+            out_name = Path(entry.get("output", "")).name or "?"
+            text = f"{entry.get('time', '')}   {src_name}  ->  {out_name}"
+            color = ("gray10", "gray90")
+        else:
+            text = f"{entry.get('time', '')}   {src_name}   FAILED: {entry.get('error', '')}"
+            color = "#e74c3c"
+        ctk.CTkLabel(
+            row, text=text, anchor="w", justify="left",
+            text_color=color, wraplength=470,
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        if entry.get("ok") and entry.get("output"):
+            out = entry["output"]
+            ctk.CTkButton(
+                row, text="Open", width=56, command=lambda p=out: self.open_path(p)
+            ).grid(row=0, column=1, padx=2)
+            ctk.CTkButton(
+                row, text="Folder", width=64, command=lambda p=out: self.open_folder(p)
+            ).grid(row=0, column=2, padx=(2, 8))
+
+    def add_history(self, src, out, ok: bool, error="") -> None:
+        entry = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "source": str(src) if src else "",
+            "output": str(out) if out else "",
+            "ok": bool(ok),
+            "error": str(error),
+        }
+        self.history.insert(0, entry)
+        del self.history[MAX_HISTORY:]
+        save_history(self.history)
+        self.after(0, self._refresh_recent)
+
+    def clear_history(self):
+        self.history = []
+        save_history(self.history)
+        self._refresh_recent()
+
+    def open_path(self, path):
+        try:
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            print("Open failed:", exc)
+
+    def open_folder(self, path):
+        p = Path(path)
+        try:
+            if p.exists():
+                subprocess.Popen(["explorer", "/select,", str(p)])
+            else:
+                os.startfile(str(p.parent))  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            print("Open folder failed:", exc)
+
+    # ---- converter view -------------------------------------------------- #
+    def _build_converter(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+
+        self._section_header(frame, "Converter", "Drop a file, choose a format, convert.")
+
+        # ---- drop zone ----
+        self.drop_zone = ctk.CTkFrame(
+            frame, height=200, corner_radius=14, border_width=2, border_color=DROP_BORDER
+        )
+        self.drop_zone.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 14))
+        self.drop_zone.grid_propagate(False)
+        self.drop_zone.grid_columnconfigure(0, weight=1)
+        self.drop_zone.grid_rowconfigure(0, weight=1)
+        inner = ctk.CTkFrame(self.drop_zone, fg_color="transparent")
+        inner.grid(row=0, column=0)
+        self.drop_icon = self._load_logo("AppLogo.png", 50)
+        self.drop_icon_label = ctk.CTkLabel(inner, text="", image=self.drop_icon)
+        self.drop_icon_label.pack(pady=(0, 8))
+        self.drop_primary = ctk.CTkLabel(
+            inner, text="Drag & drop a file here",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        )
+        self.drop_primary.pack()
+        self.drop_secondary = ctk.CTkLabel(inner, text="or click to browse", text_color=MUTED)
+        self.drop_secondary.pack(pady=(2, 0))
+        self._register_drop(
+            self.drop_zone,
+            (self.drop_zone, inner, self.drop_icon_label, self.drop_primary, self.drop_secondary),
+            self.on_drop, self.browse_file,
+        )
+        # Wrap the filename / hint text to the zone width so long names stay inside.
+        self._make_labels_wrap(self.drop_zone, (self.drop_primary, self.drop_secondary))
+
+        # ---- controls card ----
+        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 12))
+        card.grid_columnconfigure(0, weight=1)
+
+        fmt = ctk.CTkFrame(card, fg_color="transparent")
+        fmt.grid(row=0, column=0, sticky="w", padx=18, pady=(16, 8))
+        ctk.CTkLabel(fmt, text="CONVERT FROM", font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=MUTED).grid(row=0, column=0, sticky="w", padx=2)
+        ctk.CTkLabel(fmt, text="CONVERT TO", font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=MUTED).grid(row=0, column=2, sticky="w", padx=(16, 0))
+        self.from_menu = ctk.CTkOptionMenu(fmt, values=["-"], state="disabled", width=150)
+        self.from_menu.grid(row=1, column=0, pady=(2, 0))
+        ctk.CTkLabel(fmt, text="→", font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=RED).grid(row=1, column=1, padx=14)
+        self.to_menu = ctk.CTkOptionMenu(fmt, values=["-"], state="disabled", width=150)
+        self.to_menu.grid(row=1, column=2, pady=(2, 0))
+
+        exp = ctk.CTkFrame(card, fg_color="transparent")
+        exp.grid(row=1, column=0, sticky="ew", padx=18, pady=(6, 4))
+        exp.grid_columnconfigure(0, weight=1)
+        self.export_label = ctk.CTkLabel(
+            exp, text="Output: next to the source file", text_color=MUTED, anchor="w",
+        )
+        self.export_label.grid(row=0, column=0, sticky="ew", padx=(2, 8))
+        self.export_btn = ctk.CTkButton(
+            exp, text="Choose Folder", width=130, command=self.choose_export_path
+        )
+        self.export_btn.grid(row=0, column=1, padx=(0, 8))
+        self.clear_btn = ctk.CTkButton(
+            exp, text="Clear", width=80, fg_color="gray50",
+            hover_color="gray40", command=self.clear_converter,
+        )
+        self.clear_btn.grid(row=0, column=2)
+
+        self.convert_btn = ctk.CTkButton(
+            card, text="Convert Now", height=46,
+            font=ctk.CTkFont(size=15, weight="bold"),
+            command=self.on_convert_click, state="disabled",
+        )
+        self.convert_btn.grid(row=2, column=0, sticky="ew", padx=18, pady=(8, 16))
+
+        self.progress = ctk.CTkProgressBar(frame, height=8)
+        self.progress.set(0)
+        self.progress.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.progress.grid_remove()  # only shown while converting
+
+        self.status = ctk.CTkLabel(
+            frame, text="Drop a file to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.status.grid(row=4, column=0, sticky="w", padx=24, pady=(4, 16))
+        return frame
+
+    # ---- batch view ------------------------------------------------------ #
+    def _build_batch(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(3, weight=1)
+
+        self._section_header(frame, "Batch Convert", "Convert many files to one format at once.")
+
+        self.batch_drop = ctk.CTkFrame(
+            frame, height=120, corner_radius=14, border_width=2, border_color=DROP_BORDER
+        )
+        self.batch_drop.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 12))
+        self.batch_drop.grid_propagate(False)
+        self.batch_drop.grid_columnconfigure(0, weight=1)
+        self.batch_drop.grid_rowconfigure(0, weight=1)
+        binner = ctk.CTkFrame(self.batch_drop, fg_color="transparent")
+        binner.grid(row=0, column=0)
+        self.batch_primary = ctk.CTkLabel(
+            binner, text="Drop multiple files here",
+            font=ctk.CTkFont(size=15, weight="bold"),
+        )
+        self.batch_primary.pack()
+        self.batch_label = ctk.CTkLabel(binner, text="or click to browse", text_color=MUTED)
+        self.batch_label.pack(pady=(2, 0))
+        self._register_drop(
+            self.batch_drop, (self.batch_drop, binner, self.batch_primary, self.batch_label),
+            self.on_batch_drop, self.browse_batch,
+        )
+
+        ctrl = ctk.CTkFrame(frame, fg_color="transparent")
+        ctrl.grid(row=2, column=0, sticky="w", padx=24, pady=8)
+        ctk.CTkLabel(ctrl, text="Convert all to:").grid(row=0, column=0, padx=(0, 8))
+        self.batch_to = ctk.CTkOptionMenu(ctrl, values=["-"], width=140, state="disabled")
+        self.batch_to.grid(row=0, column=1, padx=(0, 16))
+        self.batch_btn = ctk.CTkButton(
+            ctrl, text="Convert All", width=130, font=ctk.CTkFont(weight="bold"),
+            command=self.on_batch_convert, state="disabled",
+        )
+        self.batch_btn.grid(row=0, column=2)
+
+        self.batch_list = ctk.CTkTextbox(frame, corner_radius=10)
+        self.batch_list.grid(row=3, column=0, sticky="nsew", padx=24, pady=8)
+
+        self.batch_progress = ctk.CTkProgressBar(frame, height=8)
+        self.batch_progress.set(0)
+        self.batch_progress.grid(row=4, column=0, sticky="ew", padx=24, pady=(0, 18))
+        return frame
+
+    # ---- drag & drop helpers -------------------------------------------- #
+    def _register_drop(self, zone, widgets, on_drop, on_click):
+        def on_enter(_e):
+            zone.configure(border_color=RED_BRIGHT)
+
+        def on_leave(_e):
+            zone.configure(border_color=DROP_BORDER)
+
+        def on_drop_wrapped(event):
+            on_leave(event)
+            on_drop(event)
+
+        for widget in widgets:
+            try:
+                widget.drop_target_register(DND_FILES)
+                widget.dnd_bind("<<Drop>>", on_drop_wrapped)
+                widget.dnd_bind("<<DropEnter>>", on_enter)
+                widget.dnd_bind("<<DropLeave>>", on_leave)
+            except Exception as exc:  # noqa: BLE001
+                print("Drag & drop registration failed:", exc)
+            widget.bind("<Button-1>", lambda _e: on_click())
+            try:
+                widget.configure(cursor="hand2")
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _parse_drop(self, event) -> list[Path]:
+        try:
+            paths = self.tk.splitlist(event.data)
+        except Exception:  # noqa: BLE001
+            paths = [event.data]
+        return [Path(p) for p in paths]
+
+    def _make_labels_wrap(self, container, labels, margin: int = 48) -> None:
+        """Keep `labels` wrapped within `container`'s width so long text (e.g. a
+        long filename) can never spill past the container's border."""
+        def _update(event):
+            wrap = max(event.width - margin, 120)
+            for lbl in labels:
+                lbl.configure(wraplength=wrap)
+
+        container.bind("<Configure>", _update)
+
+    @staticmethod
+    def _ellipsize(text: str, limit: int = 52) -> str:
+        """Shorten `text` with a middle ellipsis (keeps start and end visible)."""
+        if len(text) <= limit:
+            return text
+        head = (limit - 1) // 2
+        tail = limit - 1 - head
+        return f"{text[:head]}…{text[-tail:]}"
+
+    # ---- converter actions ---------------------------------------------- #
+    def on_drop(self, event):
+        paths = self._parse_drop(event)
+        if paths:
+            self.set_file(paths[0])
+
+    def browse_file(self):
+        path = filedialog.askopenfilename(title="Select a file to convert")
+        if path:
+            self.set_file(Path(path))
+
+    def set_file(self, path: Path):
+        if not path.is_file():
+            self.status.configure(text="Please drop a single file.", text_color="orange")
+            return
+        self.selected_file = path
+        ext = detect_format(path)
+        targets = compatible_targets(ext)
+        try:
+            size = human_size(path.stat().st_size)
+        except OSError:
+            size = "?"
+        self.drop_primary.configure(text=path.name)
+        self.from_menu.configure(values=[ext or "?"])
+        self.from_menu.set(ext or "?")
+        if targets:
+            self.drop_secondary.configure(
+                text=f"{category_of(ext)}  ·  {size}  ·  click to choose another")
+            self.to_menu.configure(values=targets, state="normal")
+            self.to_menu.set(targets[0])
+            self.convert_btn.configure(state="normal")
+            self.status.configure(text=f"Ready to convert {path.name}", text_color=MUTED)
+        else:
+            self.drop_secondary.configure(text="Unsupported format  ·  click to choose another")
+            self.to_menu.configure(values=["-"], state="disabled")
+            self.to_menu.set("-")
+            self.convert_btn.configure(state="disabled")
+            self.status.configure(text=f"Unsupported format: .{ext}", text_color="orange")
+
+    def choose_export_path(self):
+        folder = filedialog.askdirectory(title="Choose where to save converted files")
+        if folder:
+            self.export_dir = Path(folder)
+            self.export_label.configure(text=f"Output: {self._ellipsize(str(self.export_dir))}")
+
+    def clear_converter(self):
+        """Reset the converter to a clean slate for the next file."""
+        self.selected_file = None
+        self.export_dir = None
+        self.drop_primary.configure(text="Drag & drop a file here")
+        self.drop_secondary.configure(text="or click to browse")
+        self.from_menu.configure(values=["-"], state="disabled")
+        self.from_menu.set("-")
+        self.to_menu.configure(values=["-"], state="disabled")
+        self.to_menu.set("-")
+        self.convert_btn.configure(state="disabled")
+        self.progress.stop()
+        self.progress.grid_remove()
+        self.progress.configure(mode="determinate")
+        self.progress.set(0)
+        self.export_label.configure(text="Output: next to the source file")
+        self.status.configure(text="Drop a file to begin.", text_color=MUTED)
+
+    def on_convert_click(self):
+        if not self.selected_file:
+            return
+        target = self.to_menu.get()
+        if target in ("-", ""):
+            return
+        self.convert_btn.configure(state="disabled")
+        self.progress.grid()
+        self.progress.configure(mode="indeterminate")
+        self.progress.start()
+        self.status.configure(
+            text=f"Converting {self.selected_file.name} to .{target} …",
+            text_color=MUTED,
+        )
+        threading.Thread(
+            target=self._convert_worker, args=(self.selected_file, target), daemon=True
+        ).start()
+
+    def _convert_worker(self, src: Path, target: str):
+        try:
+            out = convert_file(src, target, self.export_dir)
+            self.after(0, self._convert_done, src, out, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._convert_done, src, None, exc)
+
+    def _convert_done(self, src: Path, out: Path | None, error: Exception | None):
+        self.progress.stop()
+        self.progress.grid_remove()
+        self.progress.configure(mode="determinate")
+        self.progress.set(0)
+        self.convert_btn.configure(state="normal")
+        if error:
+            self.status.configure(text=f"✕  {error}", text_color=ERROR)
+            self.add_history(src, None, False, error)
+        else:
+            self.status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
+            self.add_history(src, out, True)
+
+    # ---- batch actions --------------------------------------------------- #
+    def on_batch_drop(self, event):
+        self.set_batch(self._parse_drop(event))
+
+    def browse_batch(self):
+        paths = filedialog.askopenfilenames(title="Select files to convert")
+        if paths:
+            self.set_batch([Path(p) for p in paths])
+
+    def set_batch(self, paths: list[Path]):
+        self.batch_files = [p for p in paths if p.is_file()]
+        if not self.batch_files:
+            return
+        common: set[str] | None = None
+        for p in self.batch_files:
+            targets = set(compatible_targets(detect_format(p)))
+            common = targets if common is None else (common & targets)
+        common_sorted = sorted(common) if common else []
+
+        self.batch_primary.configure(text=f"{len(self.batch_files)} file(s) selected")
+        self.batch_label.configure(text="click to choose different files")
+        self.batch_list.delete("1.0", "end")
+        for p in self.batch_files:
+            self.batch_list.insert("end", f"- {p.name}\n")
+
+        if common_sorted:
+            self.batch_to.configure(values=common_sorted, state="normal")
+            self.batch_to.set(common_sorted[0])
+            self.batch_btn.configure(state="normal")
+        else:
+            self.batch_to.configure(values=["-"], state="disabled")
+            self.batch_to.set("-")
+            self.batch_btn.configure(state="disabled")
+            self.batch_list.insert(
+                "end", "\nNo common target format. Try files of the same type.\n"
+            )
+
+    def on_batch_convert(self):
+        target = self.batch_to.get()
+        if target in ("-", "") or not self.batch_files:
+            return
+        self.batch_btn.configure(state="disabled")
+        self.batch_progress.set(0)
+        self.batch_list.delete("1.0", "end")
+        files = list(self.batch_files)
+        threading.Thread(
+            target=self._batch_worker, args=(files, target), daemon=True
+        ).start()
+
+    def _batch_worker(self, files: list[Path], target: str):
+        total = len(files)
+        for i, p in enumerate(files, start=1):
+            try:
+                out = convert_file(p, target)
+                self.after(0, self._batch_log, f"OK   {p.name} -> {out.name}")
+                # Marshal history updates to the main thread (self.history is shared
+                # with the UI; mutating it off-thread can race with _refresh_recent).
+                self.after(0, self.add_history, p, out, True)
+            except Exception as exc:  # noqa: BLE001
+                traceback.print_exc()
+                self.after(0, self._batch_log, f"FAIL {p.name}: {exc}")
+                self.after(0, self.add_history, p, None, False, exc)
+            self.after(0, self.batch_progress.set, i / total)
+        self.after(0, lambda: self.batch_btn.configure(state="normal"))
+        self.after(0, self._batch_log, f"\nDone: {total} file(s) processed.")
+
+    def _batch_log(self, msg: str):
+        self.batch_list.insert("end", msg + "\n")
+        self.batch_list.see("end")
+
+
+def _run_cli(args) -> int:
+    """Headless conversion mode: --convert FILE FORMAT. Returns an exit code."""
+    import argparse
+
+    parser = argparse.ArgumentParser(prog=APP_NAME, description="Bu D3eij file converter")
+    parser.add_argument(
+        "--convert", nargs=2, metavar=("FILE", "FORMAT"),
+        help="Convert FILE to FORMAT (e.g. --convert photo.png jpg) and exit.",
+    )
+    ns = parser.parse_args(args)
+    if ns.convert:
+        src, target = ns.convert
+        try:
+            out = convert_file(src, target)
+            print(f"Saved: {out}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    return 0
+
+
+def main():
+    # If launched with flags (e.g. --convert), run headless; otherwise open the GUI.
+    if len(sys.argv) > 1 and sys.argv[1].startswith("-"):
+        sys.exit(_run_cli(sys.argv[1:]))
+    App().mainloop()
+
+
+if __name__ == "__main__":
+    main()

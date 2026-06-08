@@ -1,0 +1,141 @@
+# PROGRESS — Bu D3eij
+
+Running log of what's done and what's next. Update at the end of each session.
+
+_Last updated: 2026-06-08_
+
+## Status: working app + standalone exe — v1.2
+
+Core app, all required conversions, Recent history, Batch Convert, and a
+packaged one-folder exe are complete and verified. v1.1 adds PowerPoint (.pptx)
+input and Markdown (.md) output; v1.2 is a bug-fix/cleanup pass.
+
+## Completed
+
+### 2026-06-08 — v1.2: bug fixes + cleanup
+- **Drop-zone overflow (reported):** long file names spilled past the Converter
+  drop-zone border (centered `inner` frame grew wider than the fixed-size zone;
+  Tk doesn't clip children). Fixed with a responsive `_make_labels_wrap()`
+  helper that binds the zone's `<Configure>` to set the labels' `wraplength`.
+  Verified the label fits at both default and minimum window sizes (incl. a
+  pathological 150-char no-space name).
+- **Export-path label overflow:** long chosen folders could overflow the
+  controls card; the displayed path is now shortened with a middle ellipsis via
+  `_ellipsize()` (full path still used for saving).
+- **Batch history race:** `_batch_worker` mutated the shared `self.history` from
+  the worker thread while the UI could iterate it; history writes are now
+  marshalled with `self.after(0, self.add_history, ...)` like the single path.
+- **PPTX→MD tables:** `_pptx_table_to_md` now escapes `|` (and `\`) in cells so
+  cell content can't break the Markdown table; `pptx_to_md` uses
+  `(para.level or 0)` to avoid a crash if a bullet level is `None`.
+- **Copy:** Home tagline now mentions presentations + Markdown. `APP_VERSION = "1.2"`.
+- Verified headless (ellipsize + pipe-escape) and via GUI smoke tests. No new
+  dependencies; no converter behaviour changed.
+
+### 2026-06-08 — v1.1: PowerPoint + Markdown
+- **New conversions:** PDF→MD, DOCX→MD, PPTX→MD, PPTX→TXT, PPTX→PDF.
+  - PDF→MD via `pymupdf4llm` (rides on the already-bundled PyMuPDF), pdfplumber
+    text fallback. DOCX→MD via `mammoth` (→HTML) + `markdownify` (→MD).
+    PPTX→MD/TXT via `python-pptx` (slides → `## ` sections, bullets, tables,
+    notes). PPTX→PDF via PowerPoint COM (`_pptx_to_pdf_powerpoint`) with a
+    reportlab text-only fallback — mirrors the DOCX→PDF strategy.
+- **Format model:** added `PRESENTATION_EXTS = {"pptx"}`, `md` added to
+  `DOC_EXTS` (output-only — no `CONVERSIONS` key), `category_of()` now returns
+  "Presentation". Home "Supported formats" card updated.
+- **Deps added:** python-pptx, pymupdf4llm, mammoth, markdownify.
+- **Verified (headless 5/5):** PPTX→MD/TXT/PDF, DOCX→MD, PDF→MD against
+  generated samples; PPTX→PDF confirmed on both the PowerPoint-COM path and the
+  reportlab fallback; CLI (`--convert deck.pptx md`) and a GUI smoke test
+  (all frames build; pptx dropdown offers pdf/txt/md). `APP_VERSION = "1.1"`.
+- **Exe rebuilt + verified (5/5 in the frozen build):** PDF→MD, DOCX→MD,
+  PPTX→MD/TXT/PDF all produce real structure-aware output from
+  `dist\Bu D3eij\Bu D3eij.exe --convert ...`.
+- **PyInstaller gotcha fixed:** pymupdf4llm's `__init__` activates the
+  `pymupdf.layout` ONNX feature at import time; bundling its Python without the
+  models/`onnxruntime` made `import pymupdf4llm` crash → PDF→MD silently fell
+  back to flat pdfplumber text. Fix = `--exclude-module pymupdf.layout
+  onnxruntime rapidocr_onnxruntime` (clean ImportError → classic text engine,
+  leaner exe) plus `--collect-submodules pymupdf4llm --hidden-import tabulate`.
+  Build command in CLAUDE.md/README updated to match.
+
+### 2026-06-06 — Initial build
+- Scaffolded `app.py` (CustomTkinter + tkinterdnd2), `requirements.txt`, `README.md`.
+- Sidebar nav (Home, Converter, Recent, Batch Convert, Tools); drag-and-drop
+  + click-to-browse upload zone; auto-detect input format; compatible-only
+  "Convert to"; threaded conversion with progress bar + success/error status.
+- Conversions implemented and verified (8/8 headless):
+  - Images: JPG/PNG/WEBP/BMP/GIF/TIFF swaps (Pillow).
+  - Docs: PDF→TXT (pdfplumber), PDF→DOCX (pdf2docx), DOCX→TXT (python-docx),
+    DOCX→PDF (docx2pdf via Word, reportlab fallback).
+  - A/V: MP4→MP3/WAV, MP3→WAV, WAV→MP3 (ffmpeg-python).
+- Environment set up: installed ffmpeg (winget Gyan.FFmpeg) and Python 3.11;
+  created `.venv` on 3.11; verified GUI builds and launches.
+
+### 2026-06-06 — Follow-up
+- **Python cleanup:** uninstalled system Python 3.14.5; 3.11.9 is now the
+  only/default Python. `.venv` unaffected.
+- **Recent tab (functional):** persistent history in
+  `%LOCALAPPDATA%\Bu D3eij\history.json`; scrollable list with per-entry
+  Open / Folder buttons + Clear; records single and batch conversions.
+  Verified (record/persist/reload/clear).
+- **Headless CLI:** `app.py --convert FILE FORMAT` (also enables frozen-exe testing).
+- **Packaged exe:** PyInstaller one-folder windowed build at
+  `dist\Bu D3eij\Bu D3eij.exe` (~250 MB). All 8 conversions verified running
+  inside the frozen exe; GUI launches cleanly.
+- Added `CLAUDE.md` + this file.
+
+### 2026-06-06 — Branding
+- Window icon + exe icon from `AppLogo.png` (generated multi-size `AppLogo.ico`).
+- In-app logo (`DashboardLogo.png`) in the sidebar header and on the Home screen.
+- `resource_path()` so assets resolve in dev and inside the exe; both images
+  bundled into the exe via `--icon` + `--add-data`. Verified from source; exe rebuilt.
+
+### 2026-06-06 — UI polish (layout & UX)
+- Section headers with subtitles; consistent 24px padding and rounded "cards".
+- Converter: drop zone shows the app icon and, once a file is picked, its name +
+  category + size ("Image · 186 B · click to choose another"); grouped controls
+  card with a `CONVERT FROM → CONVERT TO` layout; progress bar only appears while
+  converting; status uses ✓ / ✕ icons.
+- Home: logo + tagline, **Convert a File** / **Batch Convert** quick actions, and a
+  "Supported formats" card.
+- Tools (was a placeholder): live FFmpeg status, history count, version, and
+  "Open history folder" / "Reveal last output" buttons.
+- Batch view restyled to match; drag-over highlights the drop border; drop zones
+  show a pointer cursor. Window default 1000x680. Verified via screenshots.
+
+### 2026-06-06 — UI redesign (logo palette)
+- Extracted the palette from `AppLogo.png` (brand red `#E11414`/`#B4000C`,
+  highlight `#F01818`) and built `bud3eij_theme.json` (recolored CustomTkinter
+  theme). Default appearance is now **Dark**.
+- Restyled: logo sidebar with red active-nav highlight, red section titles,
+  red-bordered drop zones with drag-hover highlight, neutral dropdowns with red
+  accents, bold red "Convert Now" CTA, palette-based success/error status.
+- Verified visually (screenshots of all four views) and rebuilt the exe with
+  the theme bundled.
+
+### 2026-06-06 — Converter controls + shortcut
+- Converter: **Choose Export Path** button (per-conversion output folder) and
+  **Clear** button (reset the form). `convert_file()` gained an `out_dir` arg
+  (defaults to next-to-source); single conversions honour `self.export_dir`.
+- Created a **Desktop shortcut** to `dist\Bu D3eij\Bu D3eij.exe`.
+
+## Backlog / next steps
+- [ ] Optional: Windows "Send to → Convert" shell entry.
+- [ ] Make **Tools** tab functional (e.g. ffmpeg status check, open output folder,
+      appearance settings).
+- [ ] Flesh out the **Home** screen (currently a simple placeholder).
+- [ ] Add an **in-repo test script** (`tests/`) so verification is reproducible
+      instead of ad-hoc temp scripts.
+- [ ] Optional: per-file progress for large A/V; quality/bitrate options.
+- [ ] Optional: bundle ffmpeg into the exe if it ever needs to run on a PC
+      without ffmpeg installed (adds ~170 MB).
+
+## Decisions & constraints
+- **Python 3.11** (not 3.14) for guaranteed wheels of the native-extension deps.
+- **High-fidelity docs:** pdf2docx + docx2pdf (Word); reportlab is the text-only
+  DOCX→PDF fallback when Word/COM is unavailable.
+- **Exe:** one-folder (faster, more reliable for this dep set) and **windowed**;
+  ffmpeg is **not** bundled (relies on system install — app is for personal use).
+- Output is always saved next to the source; existing files are never
+  overwritten (numbered copies instead).
+- See `CLAUDE.md` for environment paths, commands, and gotchas.
