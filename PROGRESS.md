@@ -4,17 +4,37 @@ Running log of what's done and what's next. Update at the end of each session.
 
 _Last updated: 2026-06-08_
 
-## Status: working app + standalone exe — v1.4
+## Status: working app + standalone exe — v1.4.5
 
 Core app, all required conversions, Recent history, Batch Convert, and a
 packaged one-folder exe are complete and verified. v1.1 = PowerPoint + Markdown;
 v1.2 = bug fixes; v1.3 = YouTube downloads + sun/moon toggle; v1.4 = visual
-redesign (file-type icons, hero Home, table Recent).
+redesign (file-type icons, hero Home, table Recent); v1.4.5 = animated
+"Convert Now" button.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-08 — v1.4.5: animated Convert Now button
+- New `GradientButton(ctk.CTkFrame)` widget (defined just above `class App`) —
+  a drop-in for the old `CTkButton` (`grid`, `command`, `configure(state=…)`),
+  plus `start_busy()`/`stop_busy()`. The whole visual is composed in Pillow
+  (gradient + gloss + gaussian shine band + gaussian-blurred glow + text +
+  white-tinted `assets/ui/sparkles.png`) and animated by swapping a `CTkImage`
+  on an inner label each tick.
+- States: disabled (flat grey, no anim), idle (sweeping shine + breathing glow,
+  ~20 fps), hover (brighter + glow bloom + faster shine, ~30 fps), press (dim),
+  busy (double-shine flow + "Converting…" dots). Static layers are cached by
+  `(w, h, enabled)`; animation only runs while mapped (pauses on `<Unmap>`,
+  cancelled on `<Destroy>`) so it's idle-cheap.
+- Wired into the convert flow: `on_convert_click` calls `start_busy()`,
+  `_convert_done` calls `stop_busy()`.
+- Verified from source (idle/hover/busy/disabled renders) and in the rebuilt
+  frozen exe (renders + sparkle asset bundles under `_internal/assets/ui`).
+
+### Earlier completed work
 
 ### 2026-06-08 — v1.4: professional visual redesign
 - **Icon assets:** sourced file-type icons (vscode-icons, MIT) + UI/nav icons

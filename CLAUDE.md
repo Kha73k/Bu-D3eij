@@ -95,6 +95,20 @@ testable without the GUI); the `App` class is a thin GUI layer on top.
   (Tkinter is not thread-safe). Drop zones are built with an inner frame of
   labels (`drop_primary`/`drop_secondary`); `_register_drop(zone, widgets, ...)`
   wires DnD + click + drag-hover border on every child widget.
+- **Animated Convert button (1.4.5):** the Converter's "Convert Now" is a custom
+  `GradientButton(ctk.CTkFrame)` (defined just above `class App`), not a
+  `CTkButton`. CustomTkinter has no CSS, so the whole button is **composed in
+  Pillow** (red gradient + gloss + gaussian shine band + blurred glow + text +
+  white-tinted `assets/ui/sparkles.png`) and animated by swapping a `CTkImage`
+  on an inner label each tick. It's a drop-in: supports `grid`, `command`,
+  `configure(state="normal"|"disabled")`, plus `start_busy()`/`stop_busy()`
+  (the convert flow calls these in `on_convert_click`/`_convert_done`). States:
+  disabled (flat grey), idle (sweeping shine + breathing glow), hover (brighter
+  + glow bloom), press (dim), busy (double-shine flow + "Converting…" dots).
+  Static layers cache by `(w, h, enabled)`; the loop only runs while **mapped**
+  (pauses on `<Unmap>`, cancelled on `<Destroy>`) so it's idle-cheap. Render is
+  device-pixel correct via `_get_widget_scaling()` (source rendered at realized
+  px, `CTkImage size = px / scaling`).
 - **Avoiding text overflow:** a fixed-size container (`grid_propagate(False)`)
   does NOT clip its children, so an unbounded label (e.g. a long filename) spills
   past the border. Use `_make_labels_wrap(container, labels)` (binds

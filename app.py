@@ -606,7 +606,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "1.4"
+APP_VERSION = "1.4.5"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -633,6 +633,372 @@ try:
     ctk.set_default_color_theme(resource_path("bud3eij_theme.json"))
 except Exception:  # noqa: BLE001 - fall back to a built-in theme
     ctk.set_default_color_theme("blue")
+
+
+class GradientButton(ctk.CTkFrame):
+    """A flashy, fully animated 'Convert' button drawn entirely with Pillow.
+
+    CustomTkinter (Tkinter) has no CSS engine — no gradients, sweeping shines,
+    glows or transitions — so the button's whole visual is composed as a PIL
+    image and swapped onto an inner label every animation tick. Effects:
+      * red left→right gradient with a top gloss sheen,
+      * a light band that sweeps across (the "shine"),
+      * a breathing glow when idle, a brighter glow + faster shine on hover,
+      * a quick darken on press,
+      * a continuous double-shine "flow" with animated "Converting…" dots while
+        a conversion runs (``start_busy`` / ``stop_busy``),
+      * a flat, greyed, motionless look while disabled.
+
+    Drop-in for the old ``CTkButton``: supports ``grid``, a ``command`` callback
+    and ``configure(state="normal"|"disabled")``. Animation only runs while the
+    widget is mapped (it pauses when you switch pages) and is fully cancelled on
+    destroy, so it never burns CPU in the background.
+    """
+
+    GLOW_PAD = 9      # logical px of glow margin reserved around the body
+    RADIUS = 0.34     # corner radius as a fraction of the body height
+
+    def __init__(self, master, text: str = "Convert", height: int = 46,
+                 command=None, state: str = "normal", **_ignored):
+        super().__init__(master, fg_color="transparent",
+                         height=height + 2 * self.GLOW_PAD)
+        self._text = text
+        self._command = command
+        self._btn_h = height
+        self._enabled = state != "disabled"
+        self._busy = False
+        self._hover = False
+        self._press = False
+        # animation state
+        self._phase = 0.0     # shine sweep position 0..1
+        self._breath = 0.0    # breathing oscillator (radians)
+        self._glow = 0.0      # eased glow amount 0..1
+        self._dots = 0        # animated "Converting…" dot count
+        self._dot_acc = 0
+        self._anim_id = None
+        self._resize_id = None
+        # cached static layers (rebuilt on size/state change)
+        self._stat = None
+        self._stat_key = None
+        self._cur_img = None  # keep a ref so the PhotoImage isn't GC'd
+
+        self.grid_propagate(False)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self._label = ctk.CTkLabel(self, text="", fg_color="transparent")
+        self._label.grid(row=0, column=0, sticky="nsew")
+
+        for w in (self, self._label):
+            w.bind("<Enter>", self._on_enter)
+            w.bind("<Leave>", self._on_leave)
+            w.bind("<Button-1>", self._on_press)
+            w.bind("<ButtonRelease-1>", self._on_release)
+        self.bind("<Configure>", self._on_configure)
+        self.bind("<Map>", lambda _e: self._start())
+        self.bind("<Unmap>", lambda _e: self._stop())
+        self.bind("<Destroy>", self._on_destroy)
+
+    # ---- public drop-in API --------------------------------------------- #
+    def configure(self, **kwargs):
+        if "state" in kwargs:
+            self.set_enabled(kwargs.pop("state") != "disabled")
+        if "text" in kwargs:
+            self._text = kwargs.pop("text")
+            self._render()
+        if kwargs:
+            super().configure(**kwargs)
+
+    def set_enabled(self, on: bool):
+        on = bool(on)
+        if on == self._enabled:
+            return
+        self._enabled = on
+        if not on:
+            self._hover = self._press = False
+        if on:
+            self._start()
+        elif not self._busy:
+            self._stop()
+        self._render()
+
+    def start_busy(self):
+        """Switch to the animated 'Converting…' look (clicks ignored)."""
+        self._busy = True
+        self._phase = 0.0
+        self._dots = 0
+        self._dot_acc = 0
+        self._start()
+
+    def stop_busy(self):
+        self._busy = False
+        if self._enabled:
+            self._start()
+        else:
+            self._stop()
+        self._render()
+
+    # ---- event handlers -------------------------------------------------- #
+    def _on_enter(self, _e):
+        if self._enabled and not self._busy:
+            self._hover = True
+
+    def _on_leave(self, _e):
+        self._hover = False
+        self._press = False
+
+    def _on_press(self, _e):
+        if self._enabled and not self._busy:
+            self._press = True
+
+    def _on_release(self, _e):
+        fire = self._press and self._hover and self._enabled and not self._busy
+        self._press = False
+        if fire and self._command is not None:
+            self._command()
+
+    def _on_configure(self, _e):
+        if self._resize_id is not None:
+            try:
+                self.after_cancel(self._resize_id)
+            except Exception:  # noqa: BLE001
+                pass
+        self._resize_id = self.after(60, self._apply_resize)
+
+    def _apply_resize(self):
+        self._resize_id = None
+        self._stat = None  # force static layers to rebuild at the new width
+        self._render()
+
+    def _on_destroy(self, event):
+        if event.widget is self:
+            self._stop()
+
+    # ---- animation loop -------------------------------------------------- #
+    def _start(self):
+        if self._anim_id is not None:
+            return
+        try:
+            if not self.winfo_ismapped():
+                return
+        except Exception:  # noqa: BLE001
+            return
+        if not (self._busy or self._enabled):
+            self._render()
+            return
+        self._tick()
+
+    def _stop(self):
+        if self._anim_id is not None:
+            try:
+                self.after_cancel(self._anim_id)
+            except Exception:  # noqa: BLE001
+                pass
+            self._anim_id = None
+
+    def _tick(self):
+        import math
+        self._anim_id = None
+        if not self.winfo_exists() or not self.winfo_ismapped():
+            return
+        if self._busy:
+            self._phase = (self._phase + 0.035) % 1.0
+            target_glow = 0.32 + 0.12 * (0.5 + 0.5 * math.sin(self._breath))
+            interval = 33
+        elif self._hover:
+            self._phase = (self._phase + 0.022) % 1.0
+            target_glow = 0.60
+            interval = 33
+        else:
+            self._phase = (self._phase + 0.012) % 1.0
+            target_glow = 0.10 + 0.08 * (0.5 + 0.5 * math.sin(self._breath))
+            interval = 50
+        if self._press:
+            target_glow = 0.25
+        self._breath += 0.10
+        self._glow += (target_glow - self._glow) * 0.25
+        if self._busy:
+            self._dot_acc += interval
+            if self._dot_acc >= 400:
+                self._dot_acc = 0
+                self._dots = (self._dots + 1) % 4
+        self._render()
+        if self._busy or self._enabled:
+            self._anim_id = self.after(interval, self._tick)
+
+    # ---- rendering ------------------------------------------------------- #
+    @staticmethod
+    def _load_font(px: int):
+        from PIL import ImageFont
+        px = max(8, px)
+        fonts_dir = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")
+        for name in ("segoeuib.ttf", "seguisb.ttf", "arialbd.ttf"):
+            try:
+                return ImageFont.truetype(os.path.join(fonts_dir, name), px)
+            except Exception:  # noqa: BLE001
+                continue
+        try:
+            return ImageFont.truetype("arialbd.ttf", px)
+        except Exception:  # noqa: BLE001
+            return ImageFont.load_default()
+
+    def _load_spark(self, px: int):
+        try:
+            from PIL import Image
+
+            s = Image.open(resource_path("assets/ui/sparkles.png")).convert("RGBA")
+            white = Image.new("RGBA", s.size, (255, 255, 255, 0))
+            white.putalpha(s.split()[3])
+            scale = px / max(white.size)
+            return white.resize((max(1, int(white.width * scale)),
+                                 max(1, int(white.height * scale))))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _ensure_static(self, w: int, h: int, scaling: float):
+        key = (w, h, self._enabled)
+        if self._stat_key == key and self._stat is not None:
+            return self._stat
+        import math
+
+        from PIL import Image, ImageDraw, ImageFilter
+
+        pad = max(1, int(round(self.GLOW_PAD * scaling)))
+        rw = max(1, w - 2 * pad)
+        rh = max(1, h - 2 * pad)
+        radius = max(1, int(rh * self.RADIUS))
+
+        mask = Image.new("L", (rw, rh), 0)
+        ImageDraw.Draw(mask).rounded_rectangle([0, 0, rw - 1, rh - 1], radius, fill=255)
+
+        if self._enabled:
+            c_l, c_r = (0xF0, 0x2A, 0x2A), (0x8C, 0x00, 0x08)
+            gloss_peak = 60
+        else:
+            c_l, c_r = (0x6E, 0x66, 0x68), (0x4A, 0x44, 0x46)
+            gloss_peak = 28
+        row = Image.new("RGB", (rw, 1))
+        rpx = row.load()
+        for x in range(rw):
+            t = x / max(1, rw - 1)
+            rpx[x, 0] = (int(c_l[0] + (c_r[0] - c_l[0]) * t),
+                         int(c_l[1] + (c_r[1] - c_l[1]) * t),
+                         int(c_l[2] + (c_r[2] - c_l[2]) * t))
+        base = row.resize((rw, rh))
+
+        gcol = Image.new("L", (1, rh))
+        gpx = gcol.load()
+        for y in range(rh):
+            ty = y / max(1, rh - 1)
+            gpx[0, y] = int(max(0.0, (0.5 - ty) / 0.5) * gloss_peak)
+        base = Image.composite(Image.new("RGB", (rw, rh), (255, 255, 255)),
+                               base, gcol.resize((rw, rh)))
+
+        band_w = max(int(rh * 1.4), int(rw * 0.15), 2)
+        sb = Image.new("L", (band_w, 1))
+        spx = sb.load()
+        sigma = max(1.0, band_w * 0.22)
+        for x in range(band_w):
+            d = (x - band_w / 2) / sigma
+            spx[x, 0] = int(150 * math.exp(-0.5 * d * d))
+        shine_a = sb.resize((band_w, rh))
+        shine_w = Image.new("RGB", (band_w, rh), (255, 255, 255))
+
+        glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        if self._enabled:
+            ImageDraw.Draw(glow).rounded_rectangle(
+                [pad - 2, pad - 2, w - pad + 1, h - pad + 1], radius + 2,
+                fill=(0xFF, 0x22, 0x22, 255))
+            glow = glow.filter(ImageFilter.GaussianBlur(max(2, int(pad * 1.1))))
+
+        self._stat = dict(
+            pad=pad, rw=rw, rh=rh, mask=mask, base=base, band_w=band_w,
+            shine_a=shine_a, shine_w=shine_w, glow=glow,
+            font=self._load_font(int(round(self._btn_h * 0.36 * scaling))),
+            spark=self._load_spark(int(round(self._btn_h * 0.42 * scaling))),
+        )
+        self._stat_key = key
+        return self._stat
+
+    def _compose(self):
+        import math
+
+        from PIL import Image, ImageDraw, ImageEnhance
+
+        w = self.winfo_width()
+        h = self.winfo_height()
+        if w <= 1 or h <= 1:
+            return None
+        scaling = self._get_widget_scaling()
+        st = self._ensure_static(w, h, scaling)
+        pad, rw, rh = st["pad"], st["rw"], st["rh"]
+
+        if not self._enabled and not self._busy:
+            factor = 1.0
+        elif self._press:
+            factor = 0.90
+        elif self._hover:
+            factor = 1.14
+        elif self._busy:
+            factor = 1.06
+        else:
+            factor = 1.0 + 0.05 * (0.5 + 0.5 * math.sin(self._breath))
+
+        body = st["base"].copy()
+        if abs(factor - 1.0) > 1e-3:
+            body = ImageEnhance.Brightness(body).enhance(factor)
+
+        if self._enabled or self._busy:
+            bw = st["band_w"]
+            spans = [self._phase]
+            if self._busy:
+                spans.append((self._phase + 0.5) % 1.0)
+            for ph in spans:
+                sx = int(ph * (rw + bw)) - bw
+                body.paste(st["shine_w"], (sx, 0), st["shine_a"])
+
+        draw = ImageDraw.Draw(body)
+        label = ("Converting" + "." * self._dots) if self._busy else self._text
+        txt_color = (255, 255, 255) if (self._enabled or self._busy) else (190, 182, 184)
+        font, spark = st["font"], st["spark"]
+        bbox = draw.textbbox((0, 0), label, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        gap = max(2, int(rh * 0.12))
+        show_spark = spark is not None and (self._enabled or self._busy)
+        sw = (spark.width + gap) if show_spark else 0
+        x0 = (rw - (tw + sw)) // 2
+        y0 = (rh - th) // 2 - bbox[1]
+        if show_spark:
+            body.paste(spark, (x0, (rh - spark.height) // 2), spark)
+            x0 += spark.width + gap
+        draw.text((x0, y0), label, font=font, fill=txt_color)
+
+        body = body.convert("RGBA")
+        body.putalpha(st["mask"])
+
+        full = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        if self._glow > 0.01 and self._enabled and not self._press:
+            g = st["glow"].copy()
+            amt = min(1.0, self._glow)
+            g.putalpha(g.split()[3].point(lambda v: int(v * amt)))
+            full.alpha_composite(g)
+        full.alpha_composite(body, (pad, pad))
+        return full
+
+    def _render(self):
+        if not self.winfo_exists():
+            return
+        try:
+            img = self._compose()
+        except Exception as exc:  # noqa: BLE001
+            print("convert button render failed:", exc)
+            return
+        if img is None:
+            return
+        scaling = self._get_widget_scaling()
+        ci = ctk.CTkImage(light_image=img, dark_image=img,
+                          size=(img.width / scaling, img.height / scaling))
+        self._cur_img = ci
+        self._label.configure(image=ci)
 
 
 class App(ctk.CTk, TkinterDnD.DnDWrapper):
@@ -1214,9 +1580,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.clear_btn.grid(row=0, column=2)
 
-        self.convert_btn = ctk.CTkButton(
+        self.convert_btn = GradientButton(
             card, text="Convert Now", height=46,
-            font=ctk.CTkFont(size=15, weight="bold"),
             command=self.on_convert_click, state="disabled",
         )
         self.convert_btn.grid(row=2, column=0, sticky="ew", padx=18, pady=(8, 16))
@@ -1409,6 +1774,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if target in ("-", ""):
             return
         self.convert_btn.configure(state="disabled")
+        self.convert_btn.start_busy()
         self.progress.grid()
         self.progress.configure(mode="indeterminate")
         self.progress.start()
@@ -1434,6 +1800,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.progress.configure(mode="determinate")
         self.progress.set(0)
         self.convert_btn.configure(state="normal")
+        self.convert_btn.stop_busy()
         if error:
             self.status.configure(text=f"✕  {error}", text_color=ERROR)
             self.add_history(src, None, False, error)

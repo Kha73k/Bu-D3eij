@@ -1,7 +1,26 @@
 # Bu D3eij — Patch Notes
 
 All notable changes to Bu D3eij are documented here.
-This project follows a simple `MAJOR.MINOR` versioning scheme.
+This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
+
+---
+
+## v1.4.5 — 2026-06-08
+
+A flashy upgrade to the main action button.
+
+### Changed
+- **Animated "Convert Now" button.** The flat button is replaced by a fully
+  animated control: a red gradient with a top gloss, a light **shine that sweeps
+  across**, and a gentle **breathing glow** while it waits. Hovering brightens it
+  and blooms the glow; pressing dims it; and during a conversion it switches to a
+  continuous **double-shine "flow"** with animated `Converting…` dots. It greys
+  out, flat and motionless, when no file is selected.
+
+### Notes
+- CustomTkinter has no CSS, so the whole button is drawn as an image and
+  animated by swapping frames. The animation pauses whenever the Converter page
+  isn't on screen, so it doesn't use CPU in the background.
 
 ---
 
