@@ -163,6 +163,54 @@ def _docx_to_pdf_reportlab(src: Path, out: Path) -> None:
     doc.build(story)
 
 
+def _read_text(src: Path) -> str:
+    """Read a text file as UTF-8, falling back to cp1252 for legacy files."""
+    try:
+        return src.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return src.read_text(encoding="cp1252", errors="replace")
+
+
+def txt_to_md(src: Path, out: Path) -> None:
+    """TXT -> Markdown. Plain text is already valid Markdown, so copy it verbatim."""
+    out.write_text(_read_text(src), encoding="utf-8")
+
+
+def txt_to_docx(src: Path, out: Path) -> None:
+    """TXT -> DOCX: one paragraph per line (blank lines preserved)."""
+    import docx
+
+    document = docx.Document()
+    for line in _read_text(src).splitlines():
+        document.add_paragraph(line)
+    document.save(str(out))
+
+
+def txt_to_pdf(src: Path, out: Path) -> None:
+    """TXT -> PDF: a simple, text-only layout via reportlab (lines wrap)."""
+    from xml.sax.saxutils import escape
+
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    styles = getSampleStyleSheet()
+    story = []
+    for line in _read_text(src).splitlines():
+        if line.strip():
+            story.append(Paragraph(escape(line), styles["Normal"]))
+        else:
+            story.append(Spacer(1, 0.12 * inch))
+    if not story:
+        story.append(Paragraph("(empty file)", styles["Normal"]))
+    doc = SimpleDocTemplate(
+        str(out), pagesize=LETTER,
+        leftMargin=inch, rightMargin=inch, topMargin=inch, bottomMargin=inch,
+    )
+    doc.build(story)
+
+
 def _pptx_table_to_md(table) -> str:
     """Render a python-pptx table as a GitHub-flavoured Markdown table."""
     def _cell(text: str) -> str:
@@ -381,6 +429,12 @@ def convert_file(src, target_ext: str, out_dir=None) -> Path:
         docx_to_txt(src, out)
     elif src_ext == "docx" and target_ext == "md":
         docx_to_md(src, out)
+    elif src_ext == "txt" and target_ext == "pdf":
+        txt_to_pdf(src, out)
+    elif src_ext == "txt" and target_ext == "docx":
+        txt_to_docx(src, out)
+    elif src_ext == "txt" and target_ext == "md":
+        txt_to_md(src, out)
     elif src_ext == "pptx" and target_ext == "md":
         pptx_to_md(src, out)
     elif src_ext == "pptx" and target_ext == "txt":

@@ -64,6 +64,34 @@ def resource_path(rel: str) -> str:
     return os.path.join(base, rel)
 
 
+# Bundled UI font (Inter). The static TTFs ship under assets/fonts and are
+# loaded *privately* (process-only) at startup, so the app renders in Inter
+# without requiring a system install — and it works the same in the frozen exe.
+FONT_DIR = "assets/fonts"
+
+
+def _load_app_fonts() -> None:
+    """Register the bundled Inter TTFs as private fonts for this process (Windows).
+
+    Uses GDI's AddFontResourceExW with FR_PRIVATE so Tk/Tkinter can resolve the
+    'Inter' family without the font being installed system-wide. No-op (and never
+    raises) off Windows or if the files are missing.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        directory = resource_path(FONT_DIR)
+        for name in os.listdir(directory):
+            if name.lower().endswith((".ttf", ".otf")):
+                ctypes.windll.gdi32.AddFontResourceExW(
+                    ctypes.c_wchar_p(os.path.join(directory, name)), 0x10, 0  # FR_PRIVATE
+                )
+    except Exception as exc:  # noqa: BLE001 - font is cosmetic; never block startup
+        print("Could not load bundled fonts:", exc)
+
+
 # --------------------------------------------------------------------------- #
 # Recent-conversion history (persisted under %LOCALAPPDATA%\Bu D3eij)
 # --------------------------------------------------------------------------- #
@@ -105,9 +133,12 @@ RED_BRIGHT = "#F01818"
 SIDEBAR_FG = ("#F3EEEF", "#141011")
 NAV_TEXT = ("#2A2426", "#F2E9EA")
 DROP_BORDER = ("#E11414", "#B4000C")
-SUCCESS = "#1FA85B"
-ERROR = "#F0282D"
-MUTED = ("#6B6164", "#9C9194")
+# Status colors are (light, dark) tuples tuned for WCAG AA (>=4.5:1) on the
+# light frames/cards in light mode AND on the dark surfaces in dark mode.
+SUCCESS = ("#0E6E39", "#3DD17F")
+ERROR = ("#B30F16", "#FF5C61")
+WARNING = ("#8A4500", "#F2A65A")  # replaces the old low-contrast "orange"
+MUTED = ("#595155", "#9C9194")
 # Surfaces for the 1.4 redesign (light, dark).
 CARD = ("#FFFFFF", "#252022")          # elevated card / panel
 CARD_BORDER = ("#E8E1E2", "#332D30")   # hairline card border
@@ -115,7 +146,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "3.0"
+APP_VERSION = "3.0.1"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -340,6 +371,12 @@ class GradientButton(ctk.CTkFrame):
     def _load_font(px: int):
         from PIL import ImageFont
         px = max(8, px)
+        # Prefer the bundled Inter (matches the app UI font); fall back to Segoe UI.
+        for rel in ("assets/fonts/Inter-SemiBold.ttf", "assets/fonts/Inter-Bold.ttf"):
+            try:
+                return ImageFont.truetype(resource_path(rel), px)
+            except Exception:  # noqa: BLE001
+                continue
         fonts_dir = os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "Fonts")
         for name in ("segoeuib.ttf", "seguisb.ttf", "arialbd.ttf"):
             try:
@@ -517,6 +554,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         # Enable native drag & drop on a CustomTkinter root.
         self.TkdndVersion = TkinterDnD._require(self)
 
+        # Load + select the UI font (Inter) before any widgets/fonts are built.
+        _load_app_fonts()
+        self._init_fonts()
+
         self.title(APP_NAME)
         self.geometry("1000x680")
         self.minsize(880, 600)
@@ -567,6 +608,60 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         except Exception as exc:  # noqa: BLE001
             print("Could not load logo", name, ":", exc)
             return None
+
+    # ---- fonts ----------------------------------------------------------- #
+    def _init_fonts(self) -> None:
+        """Pick the UI font family and weight map from what Tk can actually see.
+
+        Prefers Inter (its Medium/SemiBold faces register as their own Tk
+        families); falls back to IBM Plex Sans, then Segoe UI. Each role maps to
+        a (family, weight) pair so the hierarchy survives even if Inter is
+        missing (semibold/medium degrade to the base family's bold/regular).
+        """
+        import tkinter.font as tkfont
+
+        try:
+            families = set(tkfont.families())
+        except Exception:  # noqa: BLE001
+            families = set()
+
+        if "Inter" in families:
+            base = "Inter"
+            medium = "Inter Medium" if "Inter Medium" in families else "Inter"
+            semibold = "Inter SemiBold" if "Inter SemiBold" in families else "Inter"
+            self._font_spec = {
+                "regular": (base, "normal"),
+                "medium": (medium, "normal"),
+                "semibold": (semibold, "normal"),
+                "bold": (base, "bold"),
+            }
+        else:
+            base = "IBM Plex Sans" if "IBM Plex Sans" in families else (
+                "Segoe UI" if "Segoe UI" in families else None)
+            # No dedicated medium/semibold faces -> keep the hierarchy via weight.
+            self._font_spec = {
+                "regular": (base, "normal"),
+                "medium": (base, "normal"),
+                "semibold": (base, "bold"),
+                "bold": (base, "bold"),
+            }
+        # Make default-font widgets (entries, menus, etc.) use the same family.
+        if base:
+            try:
+                ctk.ThemeManager.theme["CTkFont"]["family"] = base
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _font(self, size: int = 13, weight: str = "regular") -> ctk.CTkFont:
+        """A CTkFont in the app UI family at the given role weight.
+
+        weight is a role: 'regular' (400, body), 'medium' (500, labels),
+        'semibold' (600, headings/CTAs), or 'bold'.
+        """
+        family, ctk_weight = self._font_spec.get(weight, self._font_spec["regular"])
+        if family:
+            return ctk.CTkFont(family=family, size=size, weight=ctk_weight)
+        return ctk.CTkFont(size=size, weight=ctk_weight)
 
     # ---- icons ----------------------------------------------------------- #
     @staticmethod
@@ -631,12 +726,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             ctk.CTkLabel(header, text="", image=self.sidebar_logo).pack(anchor="w")
         else:
             ctk.CTkLabel(
-                header, text=APP_NAME, font=ctk.CTkFont(size=20, weight="bold")
+                header, text=APP_NAME, font=self._font(20, "semibold")
             ).pack(anchor="w")
-        ctk.CTkLabel(
-            header, text="Convert anything", text_color=MUTED,
-            font=ctk.CTkFont(size=12),
-        ).pack(anchor="w", padx=(4, 0))
 
         self.nav_buttons: dict[str, ctk.CTkButton] = {}
         for i, name in enumerate(NAV_ITEMS, start=1):
@@ -713,7 +804,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         head = ctk.CTkFrame(parent, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 8))
         ctk.CTkLabel(
-            head, text=title, font=ctk.CTkFont(size=24, weight="bold"), text_color=RED
+            head, text=title, font=self._font(24, "semibold"), text_color=RED
         ).pack(anchor="w")
         if subtitle:
             ctk.CTkLabel(head, text=subtitle, text_color=MUTED).pack(anchor="w", pady=(2, 0))
@@ -738,7 +829,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkLabel(icons, text="", image=self._ui_icon("arrow-right", 16)).pack(side="left", padx=9)
         ctk.CTkLabel(icons, text="", image=self._filetype_icon(to_ext, 30)).pack(side="left")
         ctk.CTkLabel(
-            card, text=label, text_color=TEXT, font=ctk.CTkFont(size=12, weight="bold"),
+            card, text=label, text_color=TEXT, font=self._font(12, "medium"),
         ).pack(pady=(0, 14))
         self._bind_click(card, lambda: self.show_frame("Converter"))
 
@@ -755,23 +846,22 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         text = ctk.CTkFrame(hero, fg_color="transparent")
         text.grid(row=0, column=0, sticky="w", padx=(28, 12), pady=(28, 24))
         ctk.CTkLabel(
-            text, text="Convert anything,", anchor="w", text_color=TEXT,
-            font=ctk.CTkFont(size=30, weight="bold"),
+            text, text="Welcome", anchor="w", text_color=TEXT,
+            font=self._font(30, "semibold"),
         ).pack(anchor="w")
         ctk.CTkLabel(
-            text, text="to everything.", anchor="w", text_color=RED,
-            font=ctk.CTkFont(size=30, weight="bold"),
+            text, text="boss", anchor="w", text_color=RED,
+            font=self._font(30, "semibold"),
         ).pack(anchor="w")
         ctk.CTkLabel(
-            text, text="Fast, private, on-device conversion — documents, slides,\n"
-                       "images, audio & video. Plus YouTube downloads.",
+            text, text="Time to work",
             anchor="w", justify="left", text_color=MUTED, font=ctk.CTkFont(size=13),
         ).pack(anchor="w", pady=(8, 16))
         actions = ctk.CTkFrame(text, fg_color="transparent")
         actions.pack(anchor="w")
         ctk.CTkButton(
             actions, text=" Convert a File", height=42, image=self._ui_icon("repeat", 18, "#FFFFFF", "#FFFFFF"),
-            compound="left", font=ctk.CTkFont(size=14, weight="bold"),
+            compound="left", font=self._font(14, "semibold"),
             command=lambda: self.show_frame("Converter"),
         ).pack(side="left", padx=(0, 10))
         ctk.CTkButton(
@@ -801,7 +891,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         # ---- popular conversions ----
         ctk.CTkLabel(
             frame, text="Popular conversions", anchor="w", text_color=TEXT,
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=self._font(15, "semibold"),
         ).grid(row=1, column=0, sticky="w", padx=10, pady=(2, 8))
         pop = ctk.CTkFrame(frame, fg_color="transparent")
         pop.grid(row=2, column=0, sticky="ew", padx=4, pady=(0, 16))
@@ -816,7 +906,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         # ---- supported formats ----
         ctk.CTkLabel(
             frame, text="Supported formats", anchor="w", text_color=TEXT,
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=self._font(15, "semibold"),
         ).grid(row=3, column=0, sticky="w", padx=10, pady=(2, 8))
         card = ctk.CTkFrame(frame, fg_color=CARD, corner_radius=12,
                             border_width=1, border_color=CARD_BORDER)
@@ -831,7 +921,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             ctk.CTkLabel(card, text="", image=self._filetype_icon(rep_ext, 26)).grid(
                 row=r, column=0, padx=(16, 10), pady=10)
             ctk.CTkLabel(
-                card, text=cat, font=ctk.CTkFont(size=12, weight="bold"),
+                card, text=cat, font=self._font(12, "medium"),
                 text_color=TEXT, width=110, anchor="w",
             ).grid(row=r, column=1, sticky="w", pady=10)
             ctk.CTkLabel(card, text=fmts, text_color=MUTED, anchor="w").grid(
@@ -851,14 +941,14 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         rows = [
             ("FFmpeg (audio / video)",
              "Available" if ffmpeg_ok else "Not found on PATH",
-             SUCCESS if ffmpeg_ok else "orange"),
+             SUCCESS if ffmpeg_ok else WARNING),
             ("History", f"{len(self.history)} conversion(s) recorded", MUTED),
             ("Version", f"Bu D3eij {APP_VERSION}", MUTED),
         ]
         for r, (label, value, color) in enumerate(rows):
             top = 14 if r == 0 else 6
             ctk.CTkLabel(
-                card, text=label, font=ctk.CTkFont(size=12, weight="bold"), anchor="w",
+                card, text=label, font=self._font(12, "medium"), anchor="w",
             ).grid(row=r, column=0, sticky="w", padx=(18, 12), pady=(top, 6))
             ctk.CTkLabel(card, text=value, text_color=color, anchor="w").grid(
                 row=r, column=1, sticky="w", padx=(0, 18), pady=(top, 6)
@@ -911,7 +1001,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         for col, title in enumerate(["File", "From", "To", "Status", "Time", ""]):
             ctk.CTkLabel(
                 head, text=title, text_color=MUTED, anchor="w",
-                font=ctk.CTkFont(size=11, weight="bold"),
+                font=self._font(11, "medium"),
             ).grid(row=0, column=col, sticky="w", padx=(2, 6))
 
         self.recent_scroll = ctk.CTkScrollableFrame(frame, fg_color="transparent")
@@ -1047,7 +1137,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.drop_icon_label.pack(pady=(0, 8))
         self.drop_primary = ctk.CTkLabel(
             inner, text="Drag & drop a file here",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=self._font(16, "semibold"),
         )
         self.drop_primary.pack()
         self.drop_secondary = ctk.CTkLabel(inner, text="or click to browse", text_color=MUTED)
@@ -1067,13 +1157,13 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         fmt = ctk.CTkFrame(card, fg_color="transparent")
         fmt.grid(row=0, column=0, sticky="w", padx=18, pady=(16, 8))
-        ctk.CTkLabel(fmt, text="CONVERT FROM", font=ctk.CTkFont(size=11, weight="bold"),
+        ctk.CTkLabel(fmt, text="CONVERT FROM", font=self._font(11, "medium"),
                      text_color=MUTED).grid(row=0, column=0, sticky="w", padx=2)
-        ctk.CTkLabel(fmt, text="CONVERT TO", font=ctk.CTkFont(size=11, weight="bold"),
+        ctk.CTkLabel(fmt, text="CONVERT TO", font=self._font(11, "medium"),
                      text_color=MUTED).grid(row=0, column=2, sticky="w", padx=(16, 0))
         self.from_menu = ctk.CTkOptionMenu(fmt, values=["-"], state="disabled", width=150)
         self.from_menu.grid(row=1, column=0, pady=(2, 0))
-        ctk.CTkLabel(fmt, text="→", font=ctk.CTkFont(size=22, weight="bold"),
+        ctk.CTkLabel(fmt, text="→", font=self._font(22, "semibold"),
                      text_color=RED).grid(row=1, column=1, padx=14)
         self.to_menu = ctk.CTkOptionMenu(fmt, values=["-"], state="disabled", width=150)
         self.to_menu.grid(row=1, column=2, pady=(2, 0))
@@ -1132,7 +1222,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         binner.grid(row=0, column=0)
         self.batch_primary = ctk.CTkLabel(
             binner, text="Drop multiple files here",
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=self._font(15, "semibold"),
         )
         self.batch_primary.pack()
         self.batch_label = ctk.CTkLabel(binner, text="or click to browse", text_color=MUTED)
@@ -1148,7 +1238,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.batch_to = ctk.CTkOptionMenu(ctrl, values=["-"], width=140, state="disabled")
         self.batch_to.grid(row=0, column=1, padx=(0, 16))
         self.batch_btn = ctk.CTkButton(
-            ctrl, text=" Convert All", width=140, font=ctk.CTkFont(weight="bold"),
+            ctrl, text=" Convert All", width=140, font=self._font(13, "semibold"),
             image=self._ui_icon("repeat", 16, "#FFFFFF", "#FFFFFF"), compound="left",
             command=self.on_batch_convert, state="disabled",
         )
@@ -1227,7 +1317,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def set_file(self, path: Path):
         if not path.is_file():
-            self.status.configure(text="Please drop a single file.", text_color="orange")
+            self.status.configure(text="Please drop a single file.", text_color=WARNING)
             return
         self.selected_file = path
         ext = detect_format(path)
@@ -1254,7 +1344,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.to_menu.configure(values=["-"], state="disabled")
             self.to_menu.set("-")
             self.convert_btn.configure(state="disabled")
-            self.status.configure(text=f"Unsupported format: .{ext}", text_color="orange")
+            self.status.configure(text=f"Unsupported format: .{ext}", text_color=WARNING)
 
     def choose_export_path(self):
         folder = filedialog.askdirectory(title="Choose where to save converted files")
@@ -1404,7 +1494,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         card.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
-            card, text="VIDEO URL", font=ctk.CTkFont(size=11, weight="bold"), text_color=MUTED,
+            card, text="VIDEO URL", font=self._font(11, "medium"), text_color=MUTED,
         ).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 2))
         self.yt_url = ctk.CTkEntry(
             card, placeholder_text="https://www.youtube.com/watch?v=…", height=40,
@@ -1425,7 +1515,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         ).grid(row=0, column=2, padx=(14, 0))
 
         self.yt_btn = ctk.CTkButton(
-            card, text=" Download", height=46, font=ctk.CTkFont(size=15, weight="bold"),
+            card, text=" Download", height=46, font=self._font(15, "semibold"),
             image=self._ui_icon("download", 18, "#FFFFFF", "#FFFFFF"), compound="left",
             command=self.on_youtube_download,
         )
@@ -1446,7 +1536,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def on_youtube_download(self):
         url = self.yt_url.get().strip()
         if not url:
-            self.yt_status.configure(text="Please paste a video URL.", text_color="orange")
+            self.yt_status.configure(text="Please paste a video URL.", text_color=WARNING)
             return
         fmt = self.yt_format.get().lower()
         folder = filedialog.askdirectory(title="Choose where to save the download")
@@ -1568,7 +1658,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.mq_icon_label.pack(pady=(0, 8))
         self.mq_primary = ctk.CTkLabel(
             inner, text="Drag & drop an image here",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=self._font(16, "semibold"),
         )
         self.mq_primary.pack()
         self.mq_secondary = ctk.CTkLabel(inner, text="or click to browse", text_color=MUTED)
@@ -1591,7 +1681,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         qual = ctk.CTkFrame(card, fg_color="transparent")
         qual.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 2))
-        ctk.CTkLabel(qual, text="QUALITY", font=ctk.CTkFont(size=11, weight="bold"),
+        ctk.CTkLabel(qual, text="QUALITY", font=self._font(11, "medium"),
                      text_color=MUTED).grid(row=0, column=0, padx=(0, 12))
         self.mq_model = ctk.CTkSegmentedButton(
             qual, values=list(BG_MODELS), command=self._on_mq_model_change,
@@ -1607,7 +1697,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.mq_btn = ctk.CTkButton(
             card, text=" Remove Background", height=46,
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=self._font(15, "semibold"),
             image=self._ui_icon("sparkles", 18, "#FFFFFF", "#FFFFFF"), compound="left",
             command=self.on_marquee_remove, state="disabled",
         )
@@ -1644,7 +1734,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.up_icon_label.pack(pady=(0, 8))
         self.up_primary = ctk.CTkLabel(
             inner, text="Drag & drop a low-res image here",
-            font=ctk.CTkFont(size=16, weight="bold"),
+            font=self._font(16, "semibold"),
         )
         self.up_primary.pack()
         self.up_secondary = ctk.CTkLabel(
@@ -1669,7 +1759,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         # quality (model tier) selector
         qual = ctk.CTkFrame(card, fg_color="transparent")
         qual.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 2))
-        ctk.CTkLabel(qual, text="QUALITY", font=ctk.CTkFont(size=11, weight="bold"),
+        ctk.CTkLabel(qual, text="QUALITY", font=self._font(11, "medium"),
                      text_color=MUTED).grid(row=0, column=0, padx=(0, 12))
         self.up_model = ctk.CTkSegmentedButton(
             qual, values=list(UPSCALE_MODELS), command=self._on_up_model_change,
@@ -1686,7 +1776,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         # target resolution selector
         res = ctk.CTkFrame(card, fg_color="transparent")
         res.grid(row=3, column=0, sticky="w", padx=18, pady=(0, 12))
-        ctk.CTkLabel(res, text="TARGET", font=ctk.CTkFont(size=11, weight="bold"),
+        ctk.CTkLabel(res, text="TARGET", font=self._font(11, "medium"),
                      text_color=MUTED).grid(row=0, column=0, padx=(0, 12))
         self.up_target = ctk.CTkSegmentedButton(
             res, values=list(TARGETS),
@@ -1697,7 +1787,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.up_btn = ctk.CTkButton(
             card, text=" Upscale Image", height=46,
-            font=ctk.CTkFont(size=15, weight="bold"),
+            font=self._font(15, "semibold"),
             image=self._ui_icon("sparkles", 18, "#FFFFFF", "#FFFFFF"), compound="left",
             command=self.on_upscale_run, state="disabled",
         )
@@ -1736,7 +1826,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def set_marquee_file(self, path: Path):
         if not path.is_file():
-            self.mq_status.configure(text="Please drop a single image.", text_color="orange")
+            self.mq_status.configure(text="Please drop a single image.", text_color=WARNING)
             return
         ext = detect_format(path)
         self.mq_primary.configure(text=path.name)
@@ -1747,7 +1837,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.mq_secondary.configure(text="Not an image  ·  click to choose another")
             self.mq_btn.configure(state="disabled")
             self.mq_status.configure(
-                text=f"Unsupported file: .{ext or '?'} — pick an image.", text_color="orange")
+                text=f"Unsupported file: .{ext or '?'} — pick an image.", text_color=WARNING)
             return
         self.marquee_file = path
         try:
@@ -1853,7 +1943,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def set_upscale_file(self, path: Path):
         if not path.is_file():
-            self.up_status.configure(text="Please drop a single image.", text_color="orange")
+            self.up_status.configure(text="Please drop a single image.", text_color=WARNING)
             return
         ext = detect_format(path)
         self.up_primary.configure(text=path.name)
@@ -1864,7 +1954,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.up_secondary.configure(text="Not an image  ·  click to choose another")
             self.up_btn.configure(state="disabled")
             self.up_status.configure(
-                text=f"Unsupported file: .{ext or '?'} — pick an image.", text_color="orange")
+                text=f"Unsupported file: .{ext or '?'} — pick an image.", text_color=WARNING)
             return
         self.upscale_file = path
         dims = "?"
@@ -1987,13 +2077,24 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                                       text_color=MUTED, anchor="w", justify="left", wraplength=620)
         self.vg_source.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 14))
 
+        btnrow = ctk.CTkFrame(frame, fg_color="transparent")
+        btnrow.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 8))
+        btnrow.grid_columnconfigure(0, weight=1)
         self.vg_btn = ctk.CTkButton(
-            frame, text=" Detect AI Text", height=46,
-            font=ctk.CTkFont(size=15, weight="bold"),
+            btnrow, text=" Detect AI Text", height=46,
+            font=self._font(15, "semibold"),
             image=self._ui_icon("shield-check", 18, "#FFFFFF", "#FFFFFF"), compound="left",
             command=self.on_vanguard_detect,
         )
-        self.vg_btn.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 8))
+        self.vg_btn.grid(row=0, column=0, sticky="ew")
+        self.vg_reset_btn = ctk.CTkButton(
+            btnrow, text="Reset", width=110, height=46,
+            font=self._font(14, "semibold"),
+            fg_color="transparent", border_width=2, border_color=RED,
+            text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
+            command=self.reset_vanguard,
+        )
+        self.vg_reset_btn.grid(row=0, column=1, padx=(10, 0))
 
         self.vg_progress = ctk.CTkProgressBar(frame, height=8)
         self.vg_progress.set(0)
@@ -2009,12 +2110,12 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         head = ctk.CTkFrame(self.vg_results, fg_color="transparent")
         head.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 2))
         head.grid_columnconfigure(1, weight=1)
-        self.vg_score = ctk.CTkLabel(head, text="—", font=ctk.CTkFont(size=42, weight="bold"))
+        self.vg_score = ctk.CTkLabel(head, text="—", font=self._font(42, "semibold"))
         self.vg_score.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(head, text="  AI-likelihood", text_color=MUTED).grid(row=0, column=1, sticky="w")
         self.vg_chip = ctk.CTkLabel(
             head, text="", corner_radius=14, height=30, fg_color="transparent",
-            text_color="#FFFFFF", font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="#FFFFFF", font=self._font(13, "semibold"),
         )
         self.vg_chip.grid(row=0, column=2, sticky="e")
 
@@ -2047,12 +2148,22 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         return frame
 
     @staticmethod
-    def _vg_tier_color(tier: str) -> str:
+    def _vg_tier_text(tier: str):
+        """(light, dark) text color for the score + status line (WCAG AA)."""
         if tier in ("Human", "Likely Human"):
             return SUCCESS
         if tier == "Uncertain":
-            return "#E59500"  # amber
+            return WARNING  # amber, AA on the light card
         return ERROR  # Likely AI / AI
+
+    @staticmethod
+    def _vg_tier_chip(tier: str) -> str:
+        """Solid chip background dark enough for white text (>=4.5:1, both modes)."""
+        if tier in ("Human", "Likely Human"):
+            return "#0E6E39"
+        if tier == "Uncertain":
+            return "#8A4500"
+        return "#B30F16"  # Likely AI / AI
 
     # ---- vanguard actions ------------------------------------------------ #
     def on_vanguard_drop(self, event):
@@ -2070,13 +2181,13 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def set_vanguard_file(self, path: Path):
         if not path.is_file():
-            self.vg_source.configure(text="Please drop a single file.", text_color="orange")
+            self.vg_source.configure(text="Please drop a single file.", text_color=WARNING)
             return
         ext = detect_format(path)
         if ext not in ("txt", "docx", "pdf"):
             self.vg_source.configure(
                 text=f"Unsupported: .{ext or '?'} — use .txt, .docx, or .pdf.",
-                text_color="orange")
+                text_color=WARNING)
             return
         try:
             text = extract_document_text(path)
@@ -2089,11 +2200,30 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vg_source.configure(
             text=f"Loaded {path.name}  ·  {len(text.split()):,} words", text_color=MUTED)
 
+    def reset_vanguard(self):
+        """Clear input, results, highlights and score — back to the initial state."""
+        self.vanguard_file = None
+        self.vg_input.delete("1.0", "end")
+        self.vg_source.configure(
+            text="Nothing loaded — type, paste, or drop a file.", text_color=MUTED)
+        # hide + clear the results card
+        self.vg_results.grid_remove()
+        self.vg_score.configure(text="—", text_color=TEXT)
+        self.vg_chip.configure(text="", fg_color="transparent")
+        self.vg_out.configure(state="normal")
+        self.vg_out._textbox.delete("1.0", "end")
+        self.vg_out.configure(state="disabled")
+        # reset progress + status + button
+        self.vg_progress.grid_remove()
+        self.vg_progress.set(0)
+        self.vg_btn.configure(state="normal")
+        self.vg_status.configure(text="Paste or upload text, then Detect.", text_color=MUTED)
+
     def on_vanguard_detect(self):
         text = self.vg_input.get("1.0", "end").strip()
         if len(text.split()) < 5:
             self.vg_status.configure(
-                text="Please enter or upload some text first.", text_color="orange")
+                text="Please enter or upload some text first.", text_color=WARNING)
             return
         self.vg_btn.configure(state="disabled")
         self.vg_progress.grid()
@@ -2132,9 +2262,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _render_vanguard_result(self, result: dict):
         score, tier = result["score"], result["tier"]
-        color = self._vg_tier_color(tier)
+        color = self._vg_tier_text(tier)
         self.vg_score.configure(text=f"{score}%", text_color=color)
-        self.vg_chip.configure(text=f"  {tier}  ", fg_color=color)
+        self.vg_chip.configure(text=f"  {tier}  ", fg_color=self._vg_tier_chip(tier))
 
         box = self.vg_out._textbox  # underlying tk.Text for tag-based highlighting
         self.vg_out.configure(state="normal")

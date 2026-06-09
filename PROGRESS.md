@@ -2,7 +2,7 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-09_
+_Last updated: 2026-06-09 (enhancement pass)_
 
 ## Status: working app + standalone exe — v3.0 (Vanguard AI Text Detector)
 
@@ -21,6 +21,62 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-09 — Enhancement pass (typography, copy, .txt fix, Vanguard reset, contrast)
+A multi-area polish pass on v3.0 — no new features, improvements only. Each area
+was done and verified in isolation. **`APP_VERSION = "3.0.1"`** (polish bump).
+- **1. Typography — Inter app-wide.** Bundled the four static Inter weights
+  (Regular/Medium/SemiBold/Bold) under **`assets/fonts/`** and load them *privately*
+  at startup via GDI `AddFontResourceExW(..., FR_PRIVATE)` (`_load_app_fonts`), so the
+  app renders in Inter **without a system install** (works the same in the frozen exe).
+  Neither Inter nor the theme's old `Roboto` was installed, so the app had silently
+  been using Tk's fallback. The theme default family is now **Inter**
+  (`bud3eij_theme.json` `CTkFont` → Inter; `_init_fonts` re-confirms availability at
+  runtime and falls back IBM Plex Sans → Segoe UI). New `App._font(size, weight)` helper
+  maps **roles → weights**: regular(400)=`Inter`, medium(500)=`Inter Medium`,
+  semibold(600)=`Inter SemiBold` (Inter's heavier faces register as their own Tk
+  families). Applied intentionally: **headings & CTAs → SemiBold, uppercase field
+  labels/column headers/chips → Medium, body → Regular**. The Pillow-drawn
+  `GradientButton` text also uses bundled Inter now. **Build command unchanged** —
+  `--add-data "assets;assets"` already bundles `assets/fonts/`.
+- **2. UI copy.** Home hero `Convert anything, to everything.` → **“Welcome / boss”**
+  (boss in brand red), hero subtitle → **“Time to work”**; removed the sidebar
+  **“Convert anything”** tagline (logo kept).
+- **3. Bug fix — `.txt` input.** Root cause: `CONVERSIONS` had no `"txt"` key, so
+  `.txt` was a valid *output* but never a valid *input* → `compatible_targets("txt")`
+  returned `[]` → the Converter showed “Unsupported format”. Added
+  `"txt": ["pdf", "docx", "md"]` to [formats.py](bud3eij/formats.py) plus three minimal,
+  lazy-import converters in [converters.py](bud3eij/converters.py) — `txt_to_pdf`
+  (reportlab), `txt_to_docx` (python-docx), `txt_to_md` (verbatim copy) — and their
+  dispatch cases. No existing converter logic touched. Verified end-to-end (md/docx/pdf
+  outputs + GUI now accepts a `.txt`, offering pdf/docx/md).
+- **4. Vanguard Reset.** Added a secondary **Reset** button beside **Detect AI Text**
+  (`reset_vanguard`) that clears the input, results card, highlights, score/chip,
+  progress and status back to the exact initial state. Detection logic untouched.
+- **5. Accessibility / contrast (light mode), WCAG AA.** Audited every fg/bg pair with
+  an in-code contrast checker (`_contrast_audit.py`, throwaway). Fixes:
+  - **Segmented buttons** (the Marquee/YouTube/Vanguard toggles) had `text_color` white
+    in *both* modes while unselected segments were light-gray in light mode → white-on-
+    light-gray (≈1.35:1, invisible). Unselected/track now a dark warm gray `#5C5457` in
+    light mode (white text 7.34:1); selected stays brand red (white 4.87:1).
+  - **`MUTED`** light value `#6B6164` failed on the `#DFD9DA` cards (4.28:1) → `#595155`
+    (≥5.5:1 on every light surface).
+  - **`"orange"` warnings** (≈1.4–2.0:1) → new `WARNING = ("#8A4500", "#F2A65A")`
+    (≥5.1:1 light, ≥7:1 dark).
+  - **`SUCCESS`/`ERROR`** were single colors that failed as status text in light mode
+    (2.5–3.3:1); now mode-aware tuples `("#0E6E39","#3DD17F")` / `("#B30F16","#FF5C61")`
+    (≥4.5:1 in both modes; large score text ≥3:1).
+  - **Vanguard tier color** split into `_vg_tier_text` (mode-aware, score + status) and
+    `_vg_tier_chip` (solid dark bg so the white chip text clears 4.5:1; amber chip was
+    2.4:1). All pairs verified ≥4.5:1 normal / ≥3:1 large, both modes.
+- **Verified:** headless import + `.txt`→md/docx/pdf; GUI smoke (Inter resolves to
+  Inter/Inter Medium/Inter SemiBold, all 8 frames build/switch, Vanguard reset returns
+  to initial state, Converter accepts `.txt`); light-mode screenshots of Home, Marquee,
+  YouTube, Vanguard, Converter. **Frozen exe rebuilt + re-verified** (build command
+  unchanged — `--add-data "assets;assets"` already bundles `assets/fonts/`): the new
+  Inter TTFs + theme ship under `_internal/`, `--convert note.txt pdf` → valid `%PDF`
+  (new `txt_to_pdf` + reportlab work frozen), and the windowed GUI boots with no startup
+  crash (theme + private font load OK in the bundle).
 
 ### 2026-06-09 — v3.0: Vanguard — AI Text Detector
 - **New third section, `Vanguard`** (AI content detection), alongside Converter and

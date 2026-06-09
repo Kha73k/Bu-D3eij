@@ -19,6 +19,7 @@ AV_EXTS = {"mp4", "mp3", "wav"}
 CONVERSIONS: dict[str, list[str]] = {
     "pdf": ["docx", "txt", "md"],
     "docx": ["pdf", "txt", "md"],
+    "txt": ["pdf", "docx", "md"],
     "pptx": ["pdf", "txt", "md"],
     "jpg": ["png", "webp", "bmp", "gif", "tiff"],
     "jpeg": ["png", "webp", "bmp", "gif", "tiff"],

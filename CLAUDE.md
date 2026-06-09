@@ -114,9 +114,12 @@ lazily** inside each function — keep that. The bullets below describe behaviou
 still apply; only the file a function lives in changed.
 - **Format model:** `IMAGE_EXTS`/`DOC_EXTS`/`PRESENTATION_EXTS`/`AV_EXTS`, and
   `CONVERSIONS` (input ext → list of valid targets). `md` is an **output-only**
-  format (it has no `CONVERSIONS` key). `compatible_targets()` drives the UI's
-  "Convert to" options. Add new conversions here AND in the `convert_file`
-  dispatch.
+  format (it has no `CONVERSIONS` key); `txt` is both an input
+  (`txt → pdf/docx/md`) and an output. `compatible_targets()` drives the UI's
+  "Convert to" options — **a missing `CONVERSIONS` key is exactly why a format
+  shows "Unsupported"** (the v3.0 `.txt`-input bug: `txt` was an output target but
+  had no key, so it was rejected as input). Add new conversions here AND in the
+  `convert_file` dispatch.
 - **Dispatch:** `convert_file(src, target)` validates against `CONVERSIONS`,
   computes a non-clobbering output path with `unique_path()` (saves next to the
   source; never overwrites — adds ` (n)`), and routes to the right converter.
@@ -124,6 +127,8 @@ still apply; only the file a function lives in changed.
   `pdf_to_md` (pymupdf4llm, pdfplumber text fallback), `pdf_to_docx` (pdf2docx),
   `docx_to_txt` (python-docx), `docx_to_md` (mammoth→HTML + markdownify→MD),
   `docx_to_pdf` (`_docx_to_pdf_word` → `_docx_to_pdf_reportlab` fallback),
+  `txt_to_pdf` (reportlab), `txt_to_docx` (python-docx), `txt_to_md` (verbatim
+  copy via `_read_text`, utf-8 → cp1252 fallback),
   `pptx_to_md`/`pptx_to_txt` (python-pptx), `pptx_to_pdf`
   (`_pptx_to_pdf_powerpoint` COM → `_pptx_to_pdf_reportlab` fallback),
   `convert_av` (ffmpeg-python). Each **imports its heavy deps lazily** inside
@@ -219,11 +224,15 @@ still apply; only the file a function lives in changed.
   writing as AI — inherent to all detectors; the UI shows an estimate + disclaimer, never an
   accusation. GUI panel `_build_vanguard` (paste `CTkTextbox` + Upload/
   drag-drop, **Detect AI Text** button, determinate progress + live %, results card with big
-  score %, tier chip coloured by `_vg_tier_color`, a read-only textbox that **highlights
-  flagged passages** via tk `Text` tags, and a visible **disclaimer**). Handlers
+  score %, tier chip, a read-only textbox that **highlights flagged passages** via tk
+  `Text` tags, a **Reset** button (`reset_vanguard`, beside Detect — clears input/
+  results/highlights/score back to the initial state), and a visible **disclaimer**).
+  Tier colour is split for contrast: **`_vg_tier_text`** (mode-aware (light,dark) for
+  the score + status text) and **`_vg_tier_chip`** (a solid dark bg so the white chip
+  text clears WCAG AA in both modes). Handlers
   `on_vanguard_drop`/`browse_vanguard`/`set_vanguard_file`/`on_vanguard_detect`/
-  `_vanguard_worker`/`_set_vg_progress`/`_vanguard_done`/`_render_vanguard_result`. Nav icon
-  `assets/ui/shield-check.png`. CLI: `--detect FILE`. **Detection is an estimate, NOT proof**
+  `reset_vanguard`/`_vanguard_worker`/`_set_vg_progress`/`_vanguard_done`/
+  `_render_vanguard_result`. Nav icon `assets/ui/shield-check.png`. CLI: `--detect FILE`. **Detection is an estimate, NOT proof**
   — the UI says so; never phrase results as an accusation.
 - **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube,
   Marquee, Vanguard, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
@@ -263,6 +272,22 @@ still apply; only the file a function lives in changed.
   white/white for icons on the red active-nav pill). Both cache in
   `self._icon_cache`. Regenerate assets with `tools/fetch_icons.py` (needs the
   dev-only svglib/pycairo, not in requirements).
+- **Typography — Inter (enhancement pass):** the UI font is **Inter**, bundled as
+  four static TTFs under `assets/fonts/` (OFL) and loaded *privately* (process-only)
+  at startup by `_load_app_fonts()` via GDI `AddFontResourceExW(..., FR_PRIVATE)` — so
+  Inter renders **without a system install**, in dev and the frozen exe alike (it's
+  bundled by the existing `--add-data "assets;assets"`; **no build-command change**).
+  `App._init_fonts()` (called first in `__init__`, before any widget) confirms the
+  family is visible to Tk and sets the theme default (`bud3eij_theme.json` `CTkFont` →
+  Inter), falling back IBM Plex Sans → Segoe UI. Use **`self._font(size, weight)`** for
+  any new label — `weight` is a *role*: `"regular"` (400 body, family `Inter`),
+  `"medium"` (500 labels, family `Inter Medium`), `"semibold"` (600 headings/CTAs,
+  family `Inter SemiBold`). Inter's heavier faces register as their **own Tk families**
+  (that's why medium/semibold are selected by family at `weight="normal"`, not by Tk's
+  binary bold flag). Plain body labels can omit the font (they inherit Inter from the
+  theme default). Don't reintroduce raw `CTkFont(weight="bold")` for UI text — use the
+  helper so the weight scale stays intentional. (`GradientButton` draws its text in
+  Pillow from the bundled `Inter-SemiBold.ttf`.)
 - **Frame stacking gotchas (cost real time in 1.4):** `show_frame` uses
   **grid/grid_remove**, NOT `tkraise` — a `CTkScrollableFrame` (Home) will not
   raise above plain sibling frames sharing the grid cell. A top-level page frame
@@ -286,10 +311,20 @@ still apply; only the file a function lives in changed.
 - **Theme:** logo-derived red palette in `bud3eij_theme.json` (a recolored
   CustomTkinter theme) loaded via `set_default_color_theme(resource_path(...))`;
   appearance defaults to **Dark**. Palette constants (`RED`, `RED_HOVER`,
-  `SIDEBAR_FG`, `DROP_BORDER`, `SUCCESS`, `ERROR`) sit at the top of the GUI
-  section for targeted accents (active nav, drop-zone border + drag hover,
+  `SIDEBAR_FG`, `DROP_BORDER`, `SUCCESS`, `ERROR`, `WARNING`, `MUTED`) sit at the top of
+  the GUI section for targeted accents (active nav, drop-zone border + drag hover,
   section titles). The theme file must be bundled (`--add-data`). Regenerate
   the palette from the logo with `extract_palette` approach if the logo changes.
+- **Contrast / WCAG AA (enhancement pass):** status colours are **(light, dark)
+  tuples** tuned to ≥4.5:1 (normal) on the light cards/frames in light mode AND the
+  dark surfaces in dark mode: `SUCCESS=("#0E6E39","#3DD17F")`,
+  `ERROR=("#B30F16","#FF5C61")`, `WARNING=("#8A4500","#F2A65A")` (use `WARNING` for
+  warning text — **never `"orange"`**, which fails contrast), `MUTED=("#595155",…)`.
+  The **`CTkSegmentedButton`** theme uses a dark unselected fill (`#5C5457`) in light
+  mode so its **white text isn't invisible** on a light gray (the old bug — selected
+  stays brand red, white 4.87:1). When adding coloured text or a coloured chip, check
+  fg/bg both ways with the WCAG formula (a throwaway `_contrast_audit.py` was used) —
+  white-on-saturated-colour and grey-on-grey are the usual failures.
 
 ## Conventions & gotchas
 - Match the existing style: type hints, lazy converter imports, small focused
@@ -357,6 +392,7 @@ DashboardLogo.png in-app branding (sidebar header + Home banner)
 bud3eij_theme.json logo-derived red CustomTkinter theme (must be bundled)
 assets\filetypes\ colored file-type icons (vscode-icons, MIT) — must be bundled
 assets\ui\        monochrome nav/UI icons (lucide, ISC), tinted at runtime
+assets\fonts\     bundled Inter TTFs (Regular/Medium/SemiBold/Bold, OFL) — the UI font
 assets\LICENSES.md icon attributions; regenerate via tools\fetch_icons.py (dev)
 tools\fetch_icons.py  dev-only icon generator (Iconify -> PNG; not bundled)
 Bu D3eij.spec     PyInstaller spec (regenerated by the build command)
