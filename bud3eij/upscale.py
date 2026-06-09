@@ -12,6 +12,7 @@ image is preserved and padded with bars), so output is always exactly W x H.
 """
 from __future__ import annotations
 
+import math
 import sys
 import urllib.request
 from pathlib import Path
@@ -96,13 +97,20 @@ def _run_tile(session, tile):
     return np.clip(out, 0.0, 1.0)
 
 
-def _sr_x4(session, img):
-    """Upscale a HxWx3 float32[0,1] image x4, tiling large inputs to bound memory."""
+def _sr_x4(session, img, on_tile=None):
+    """Upscale a HxWx3 float32[0,1] image x4, tiling large inputs to bound memory.
+
+    `on_tile` (if given) is called once per processed tile, so callers can report
+    real fill progress (one call for the single-tile fast path too).
+    """
     import numpy as np
 
     h, w, _ = img.shape
     if h <= _TILE and w <= _TILE:
-        return _run_tile(session, img)
+        out = _run_tile(session, img)
+        if on_tile:
+            on_tile()
+        return out
     out = np.zeros((h * _SCALE, w * _SCALE, 3), dtype=np.float32)
     for y in range(0, h, _TILE):
         for x in range(0, w, _TILE):
@@ -114,6 +122,8 @@ def _sr_x4(session, img):
             hk = (min(h, y + _TILE) - y) * _SCALE
             wk = (min(w, x + _TILE) - x) * _SCALE
             out[y * _SCALE:y * _SCALE + hk, x * _SCALE:x * _SCALE + wk] = up[ky:ky + hk, kx:kx + wk]
+            if on_tile:
+                on_tile()
     return out
 
 
@@ -132,7 +142,8 @@ def _fit_letterbox(img, target_w: int, target_h: int):
 
 
 def upscale_image(src, out_path=None, target: str = DEFAULT_TARGET,
-                  model: str = DEFAULT_UPSCALE_TIER, fit: str = "letterbox") -> Path:
+                  model: str = DEFAULT_UPSCALE_TIER, fit: str = "letterbox",
+                  progress=None) -> Path:
     """Upscale `src` to an exact target resolution; return the output path.
 
     `target` is a key of `TARGETS` (1080p / 2K / 4K). `model` is an upscaler tier
@@ -140,6 +151,10 @@ def upscale_image(src, out_path=None, target: str = DEFAULT_TARGET,
     image is super-resolved with Real-ESRGAN (enough x4 passes to exceed the fitted
     size), then Lanczos-fit and letterboxed to exactly W x H. Output defaults to PNG
     (lossless); a chosen .jpg/.webp extension is honoured. Never clobbers a file.
+
+    `progress`, if given, is called with a float in [0, 1] as the work proceeds (one
+    update per processed tile, ending at 1.0) so a GUI can show a real filling bar.
+    It is invoked on the calling thread — marshal back to the UI thread yourself.
     """
     from PIL import Image
     import numpy as np
@@ -161,13 +176,28 @@ def upscale_image(src, out_path=None, target: str = DEFAULT_TARGET,
 
         big = img
         if fit_scale > 1.0:  # input is smaller than the target -> super-resolve
+            # Plan the passes up front so progress is a real fraction: each x4 pass
+            # tiles the (4x-growing) image; sum every tile we'll process.
+            total_tiles, pw, ph, factor, planned = 0, w, h, 1, 0
+            while factor < fit_scale and planned < _MAX_PASSES:
+                total_tiles += math.ceil(ph / _TILE) * math.ceil(pw / _TILE)
+                pw, ph, factor, planned = pw * _SCALE, ph * _SCALE, factor * _SCALE, planned + 1
+            total_tiles = max(1, total_tiles)
+            done = 0
+
+            def _tick():
+                nonlocal done
+                done += 1
+                if progress:
+                    progress(min(0.97, done / total_tiles * 0.97))  # reserve tail for fit/save
+
             try:
                 session = _session(model)
                 arr = np.asarray(img, dtype=np.float32) / 255.0
                 factor = 1
                 passes = 0
                 while factor < fit_scale and passes < _MAX_PASSES:
-                    arr = _sr_x4(session, arr)
+                    arr = _sr_x4(session, arr, on_tile=_tick)
                     factor *= _SCALE
                     passes += 1
                 big = Image.fromarray((np.clip(arr, 0.0, 1.0) * 255.0 + 0.5).astype("uint8"))
@@ -186,4 +216,6 @@ def upscale_image(src, out_path=None, target: str = DEFAULT_TARGET,
     out = unique_path(out)  # never clobber
     fmt = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}[suffix]
     result.save(out, fmt)
+    if progress:
+        progress(1.0)
     return out

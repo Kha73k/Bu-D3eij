@@ -2,9 +2,9 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-08_
+_Last updated: 2026-06-09_
 
-## Status: working app + standalone exe — v2.3 (Marquee Image Upscaler)
+## Status: working app + standalone exe — v2.3.5 (Marquee filling progress bars)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, and a **Marquee** image-editing section (Background Remover **+ Image
@@ -19,6 +19,28 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-09 — v2.3.5: Marquee filling progress bars (replace back-and-forth bars)
+- **Both Marquee tools now show a filling bar instead of the indeterminate
+  back-and-forth one.**
+- **Upscaler — real progress + live %.** `upscale_image` gained an optional
+  `progress(frac)` callback (kept GUI-agnostic — invoked on the worker thread). It
+  plans the per-pass tile count up front (`math.ceil(h/_TILE) * math.ceil(w/_TILE)`
+  summed across the ×4 passes) and reports `tiles_done / total` per tile (via a new
+  `on_tile` hook in `_sr_x4`), reserving the tail for the fit/save step and ending at
+  `1.0`. `_upscale_worker` marshals each fraction back with
+  `self.after(0, self._set_up_progress, frac, target, tier)`, which sets the bar and
+  shows `Upscaling to <target> with <tier>…  N%`. `on_upscale_run`/`_upscale_done`
+  now drive a **determinate** bar (no `start()`/`stop()`).
+- **Background Remover — eased fill.** rembg's `remove()` has no progress callback, so
+  a true % isn't possible; instead a timer-driven **eased fill**
+  (`_mq_fill_start`/`_mq_fill_tick`/`_mq_fill_stop`) creeps the determinate bar toward
+  ~90% while the worker runs and snaps to 100% on success — a filling bar, not a
+  bouncing one.
+- **Verified from source:** headless upscale to 4K on a tiny 4:3 input → 14 monotonic
+  progress updates 0.075 → 1.0, output exactly 3840×2160; GUI smoke confirmed the bg
+  eased fill creeps within (0, 0.9] and the upscaler bar/`…  42%` status update.
+  Pure-UX change — no deps, version, or build-command change.
 
 ### 2026-06-09 — v2.3: Marquee Image Upscaler (Real-ESRGAN)
 - **Second Marquee tool.** Marquee became a multi-tool page: `_build_marquee` now

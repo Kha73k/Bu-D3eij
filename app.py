@@ -107,7 +107,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "2.3"
+APP_VERSION = "2.3.5"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -1770,8 +1770,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         model = BG_MODELS.get(tier, BG_MODELS[DEFAULT_BG_TIER])[0]
         self.mq_btn.configure(state="disabled")
         self.mq_progress.grid()
-        self.mq_progress.configure(mode="indeterminate")
-        self.mq_progress.start()
+        self._mq_fill_start()
         self.mq_status.configure(
             text=f"Removing background with {tier}… "
                  "(the first use of a model downloads it once)",
@@ -1790,9 +1789,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.after(0, self._marquee_done, src, None, exc)
 
     def _marquee_done(self, src: Path, out: Path | None, error: Exception | None):
-        self.mq_progress.stop()
+        self._mq_fill_stop()
+        if not error:
+            self.mq_progress.set(1.0)  # snap the fill to full on success
         self.mq_progress.grid_remove()
-        self.mq_progress.configure(mode="determinate")
         self.mq_progress.set(0)
         self.mq_btn.configure(state="normal")
         if error:
@@ -1801,6 +1801,27 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         else:
             self.mq_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
             self.add_history(src, out, True)
+
+    # ---- marquee: eased fill (rembg has no real progress signal) ---------- #
+    def _mq_fill_start(self):
+        """Start a smooth determinate fill that eases toward ~90% (no signal)."""
+        self._mq_fill_value = 0.0
+        self.mq_progress.configure(mode="determinate")
+        self.mq_progress.set(0.0)
+        self._mq_fill_tick()
+
+    def _mq_fill_tick(self):
+        # ease toward 0.9: cover a small fraction of the remaining gap each tick,
+        # so the bar always keeps creeping while the worker thread runs.
+        self._mq_fill_value = min(0.9, self._mq_fill_value + max(0.004, (0.9 - self._mq_fill_value) * 0.06))
+        self.mq_progress.set(self._mq_fill_value)
+        self._mq_fill_after = self.after(110, self._mq_fill_tick)
+
+    def _mq_fill_stop(self):
+        after_id = getattr(self, "_mq_fill_after", None)
+        if after_id is not None:
+            self.after_cancel(after_id)
+            self._mq_fill_after = None
 
     # ---- marquee: upscaler actions --------------------------------------- #
     def _on_up_model_change(self, tier: str):
@@ -1870,8 +1891,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             return
         self.up_btn.configure(state="disabled")
         self.up_progress.grid()
-        self.up_progress.configure(mode="indeterminate")
-        self.up_progress.start()
+        self.up_progress.configure(mode="determinate")
+        self.up_progress.set(0)
         slow = "  This can take a while on CPU." if tier == "Max" else ""
         self.up_status.configure(
             text=f"Upscaling to {target} with {tier}… (AI super-resolution; the model "
@@ -1883,17 +1904,26 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         ).start()
 
     def _upscale_worker(self, src: Path, out: Path, target: str, tier: str):
+        def on_progress(frac: float):
+            self.after(0, self._set_up_progress, frac, target, tier)
+
         try:
-            result = upscale_image(src, out, target, tier)
+            result = upscale_image(src, out, target, tier, progress=on_progress)
             self.after(0, self._upscale_done, src, result, None)
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
             self.after(0, self._upscale_done, src, None, exc)
 
+    def _set_up_progress(self, frac: float, target: str, tier: str):
+        """Drive the real filling bar + live percentage from the worker's hook."""
+        self.up_progress.set(max(0.0, min(1.0, frac)))
+        self.up_status.configure(
+            text=f"Upscaling to {target} with {tier}…  {int(frac * 100)}%", text_color=MUTED)
+
     def _upscale_done(self, src: Path, out: Path | None, error: Exception | None):
-        self.up_progress.stop()
+        if not error:
+            self.up_progress.set(1.0)  # snap to full on success
         self.up_progress.grid_remove()
-        self.up_progress.configure(mode="determinate")
         self.up_progress.set(0)
         self.up_btn.configure(state="normal")
         if error:

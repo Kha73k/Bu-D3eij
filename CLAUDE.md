@@ -149,9 +149,12 @@ still apply; only the file a function lives in changed.
   `on_marquee_drop`/`browse_marquee`/`set_marquee_file`/`on_marquee_remove`/
   `_marquee_worker`/`_marquee_done`) validates the drop is an image (`IMAGE_EXTS`),
   asks the output path per-run via `asksaveasfilename` (defaults `<stem>_no-bg.png`),
-  shows an **indeterminate** progress bar while the worker thread runs (rembg has no
-  progress callback), and records the result via `add_history`. Nav icon reuses the
-  bundled `assets/ui/sparkles.png`.
+  shows a **filling (determinate) progress bar** while the worker thread runs, and
+  records the result via `add_history`. Because rembg's `remove()` has no progress
+  callback, the bar is an **eased simulated fill** (`_mq_fill_start`/`_mq_fill_tick`/
+  `_mq_fill_stop`): a timer creeps the bar toward ~90% while the worker runs and snaps
+  it to 100% on success — a filling bar, not the old back-and-forth one. Nav icon
+  reuses the bundled `assets/ui/sparkles.png`.
 - **Marquee → Image Upscaler (v2.3):** `upscale_image(src, out_path=None,
   target="2K", model="Fast", fit="letterbox")` in `bud3eij/upscale.py` (lazy import)
   super-resolves a low-quality image with **Real-ESRGAN** on the already-bundled
@@ -170,9 +173,14 @@ still apply; only the file a function lives in changed.
   numpy already collected; the module rides on the static `from bud3eij.upscale import
   …`). GUI panel `_build_mq_upscaler` + `_on_up_model_change`/`on_upscale_drop`/
   `browse_upscale`/`set_upscale_file`/`on_upscale_run`/`_upscale_worker`/
-  `_upscale_done`; **QUALITY** (`self.up_model`, Fast/Max) + **TARGET**
-  (`self.up_target`, 1080p/2K/4K) `CTkSegmentedButton`s; indeterminate progress (CPU
-  SR is slow, esp. Max → 4K). CLI: `--upscale FILE [TARGET]` (uses the Fast tier).
+  `_set_up_progress`/`_upscale_done`; **QUALITY** (`self.up_model`, Fast/Max) +
+  **TARGET** (`self.up_target`, 1080p/2K/4K) `CTkSegmentedButton`s. **Real filling
+  progress bar + live %:** `upscale_image` takes an optional `progress(frac)` callback
+  — it plans the per-pass tile count up front and reports `tiles_done/total` (reserving
+  the tail for the fit/save step, ending at 1.0); `_upscale_worker` marshals each
+  fraction back via `self.after(0, self._set_up_progress, …)`, which sets the bar and
+  shows `Upscaling to <target> with <tier>…  N%`. (CPU SR is slow, esp. Max → 4K, so
+  the live bar matters.) CLI: `--upscale FILE [TARGET]` (uses the Fast tier).
 - **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube,
   Marquee, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
   appearance toggle** (`_toggle_appearance`, `SUN_GLYPH`/`MOON_GLYPH` in
