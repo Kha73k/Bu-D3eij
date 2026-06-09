@@ -57,9 +57,19 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
   --collect-submodules pymupdf4llm --hidden-import tabulate `
   --collect-all yt_dlp `
   --collect-all rembg --collect-all onnxruntime --copy-metadata pymatting --copy-metadata rembg `
+  --collect-all tokenizers `
   --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
+
+> **v3.0 Vanguard (AI text detector) build note — already applied above:**
+> `--collect-all tokenizers` was added: the detector tokenizes with the HF
+> `tokenizers` (Rust) library, whose binary extension + data PyInstaller misses by
+> static analysis. `onnxruntime`/`numpy` are already collected (rembg/upscaler), so
+> nothing else changes. The DeBERTa-v3 ONNX model (~1.7 GB) + `tokenizer.json` are
+> **not bundled** (keeps the exe lean) and — for this personal build — **not hosted**
+> either: they sit in the local cache `~/.bud3eij/models/vanguard/`, which both the
+> source app and the frozen exe load from (`vanguard._ensure_file`).
 
 > **v2.0 Background Remover (rembg) build notes — already applied above:**
 > - **rembg needs `onnxruntime` at runtime**, so the old `--exclude-module
@@ -181,8 +191,42 @@ still apply; only the file a function lives in changed.
   fraction back via `self.after(0, self._set_up_progress, …)`, which sets the bar and
   shows `Upscaling to <target> with <tier>…  N%`. (CPU SR is slow, esp. Max → 4K, so
   the live bar matters.) CLI: `--upscale FILE [TARGET]` (uses the Fast tier).
+- **Vanguard → AI Text Detector (v3.0):** `detect_ai_text(source, is_file=False,
+  progress=None)` in `bud3eij/vanguard.py` (lazy import) estimates how likely text is
+  AI-generated using **`desklib/ai-text-detector-v1.01`** (a DeBERTa-v3-large fine-tune,
+  #1 open model on the **RAID** robustness benchmark) exported to ONNX and run on the
+  already-bundled **onnxruntime** — *no PyTorch*. Tokenises with the light **`tokenizers`**
+  (Rust) lib via the model's own `tokenizer.json` (verified byte-identical to HF's
+  tokenizer). The text is split into ~3-sentence chunks (`_chunk_spans`, capped at
+  `_MAX_CHUNKS=200` by merging more sentences on huge docs), **batch**-scored
+  (`_score_chunks`, `_BATCH=8`) through sigmoid→P(AI); the **overall score** is a
+  length-weighted mean → `CONFIDENCE_TIERS` (Human / Likely Human / Uncertain / Likely AI
+  / AI). Returns a GUI-agnostic dict (`score` 0-100, `tier`, per-chunk `spans` with char
+  offsets + `p_ai`, `too_short`, `model`); chunks ≥ `FLAG_THRESHOLD=0.60` get highlighted.
+  `extract_document_text` reads `.txt/.docx/.pdf` (same engines as `converters.py`).
+  Like the other models it sits **outside** `convert_file`/`CONVERSIONS`. **Model export
+  is a one-off dev step** (`_export_vanguard.py`, run in a throwaway `.venv_export` with
+  torch — never the runtime venv): the custom head (backbone → attention-masked mean-pool →
+  linear → 1 logit) is rebuilt and `torch.onnx.export`ed (`dynamo=False`) → **fp32, ~1.7 GB**
+  `model.onnx`. **fp32 is the only viable format here:** it matched torch exactly
+  (Δ=0.0000), but dynamic **int8** drifted +0.15 toward false positives and **fp16 won't
+  load in onnxruntime** for this graph (`Cast`/`Clip` op-type mismatches) — both rejected.
+  Because the app is **personal-use only**, the 1.7 GB `model.onnx` + `tokenizer.json` are
+  **neither bundled nor hosted**: they live in the local cache `~/.bud3eij/models/vanguard/`
+  where `_ensure_file` finds them (it checks, in order, a `sys._MEIPASS` bundle → a dev-local
+  `vanguard_model/` → the cache; raises a clear error if absent). **Caveat (by design):**
+  desklib catches AI text near-100% but over-flags some clean/simple/non-native *human*
+  writing as AI — inherent to all detectors; the UI shows an estimate + disclaimer, never an
+  accusation. GUI panel `_build_vanguard` (paste `CTkTextbox` + Upload/
+  drag-drop, **Detect AI Text** button, determinate progress + live %, results card with big
+  score %, tier chip coloured by `_vg_tier_color`, a read-only textbox that **highlights
+  flagged passages** via tk `Text` tags, and a visible **disclaimer**). Handlers
+  `on_vanguard_drop`/`browse_vanguard`/`set_vanguard_file`/`on_vanguard_detect`/
+  `_vanguard_worker`/`_set_vg_progress`/`_vanguard_done`/`_render_vanguard_result`. Nav icon
+  `assets/ui/shield-check.png`. CLI: `--detect FILE`. **Detection is an estimate, NOT proof**
+  — the UI says so; never phrase results as an accusation.
 - **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube,
-  Marquee, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
+  Marquee, Vanguard, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
   appearance toggle** (`_toggle_appearance`, `SUN_GLYPH`/`MOON_GLYPH` in
   "Segoe UI Symbol"), replacing the old Light/Dark/System dropdown. Each
   `_build_*` view starts with `_section_header(title, subtitle)`; controls sit in
@@ -302,6 +346,7 @@ bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
   youtube.py      download_youtube (yt-dlp)
   background.py   remove_background + BG_MODELS (Marquee bg remover)
   upscale.py      upscale_image + TARGETS (Marquee Real-ESRGAN upscaler)
+  vanguard.py     detect_ai_text + CONFIDENCE_TIERS (Vanguard AI text detector)
 requirements.txt  runtime deps (pyinstaller is dev-only, installed separately)
 README.md         user-facing docs
 CLAUDE.md         this file

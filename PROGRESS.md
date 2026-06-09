@@ -4,21 +4,59 @@ Running log of what's done and what's next. Update at the end of each session.
 
 _Last updated: 2026-06-09_
 
-## Status: working app + standalone exe — v2.3.5 (Marquee filling progress bars)
+## Status: working app + standalone exe — v3.0 (Vanguard AI Text Detector)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
-downloads, and a **Marquee** image-editing section (Background Remover **+ Image
-Upscaler**) are complete and verified — **both from source and in the rebuilt
-standalone exe**. v1.1 = PowerPoint + Markdown; v1.2 = bug fixes; v1.3 = YouTube
-downloads + sun/moon toggle; v1.4 = visual redesign (file-type icons, hero Home,
-table Recent); v1.4.5 = animated "Convert Now" button; v2.0 = Marquee / Background
-Remover (rembg); v2.1 = Marquee Flash/Mid/Omega model selector; v2.2 = split the
-logic into a `bud3eij/` package; **v2.3 = Marquee Image Upscaler (Real-ESRGAN)**.
+downloads, a **Marquee** image-editing section (Background Remover **+ Image
+Upscaler**), and a new **Vanguard** AI-content-detection section (**AI Text
+Detector**) are complete and verified. v1.1 = PowerPoint + Markdown; v1.2 = bug
+fixes; v1.3 = YouTube downloads + sun/moon toggle; v1.4 = visual redesign (file-type
+icons, hero Home, table Recent); v1.4.5 = animated "Convert Now" button; v2.0 =
+Marquee / Background Remover (rembg); v2.1 = Marquee Flash/Mid/Omega model selector;
+v2.2 = split the logic into a `bud3eij/` package; v2.3 = Marquee Image Upscaler
+(Real-ESRGAN); v2.3.5 = Marquee filling progress bars; **v3.0 = Vanguard AI Text
+Detector (desklib DeBERTa-v3-large on onnxruntime)**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-09 — v3.0: Vanguard — AI Text Detector
+- **New third section, `Vanguard`** (AI content detection), alongside Converter and
+  Marquee. First tool: an **AI Text Detector** — paste text or upload a `.txt/.docx/.pdf`,
+  get an overall **AI-likelihood %**, a **confidence tier** (Human / Likely Human /
+  Uncertain / Likely AI / AI), and **sentence-level highlighting** of the passages the
+  model flags. New nav icon `assets/ui/shield-check.png` (drawn with PIL). `APP_VERSION
+  = "3.0"`.
+- **Engine (user chose "Local — Accuracy"):** `desklib/ai-text-detector-v1.01` — a
+  DeBERTa-v3-large fine-tune, **#1 open model on the RAID** robustness benchmark — run on
+  the already-bundled **onnxruntime** (no PyTorch at runtime). New module
+  `bud3eij/vanguard.py`: `extract_document_text` (txt/docx/pdf, same engines as
+  `converters.py`), `_chunk_spans` (≈3-sentence chunks, capped at 200 by merging),
+  `_score_chunks` (batched, sigmoid→P(AI)), `detect_ai_text(source, is_file, progress)`
+  → length-weighted overall score + per-chunk `spans`. Tokenises with the light
+  **`tokenizers`** lib via the model's own `tokenizer.json`. CLI `--detect FILE`.
+- **Model export (one-off dev step, `_export_vanguard.py` in a throwaway `.venv_export`
+  with torch):** rebuilt desklib's custom head (backbone → mean-pool → linear → 1 logit),
+  `torch.onnx.export`ed → **fp32 ONNX (~1.7 GB)**. Verified parity: fp32 ONNX matches
+  PyTorch **exactly (Δ=0.0000)** and the fast tokenizer is byte-identical to HF's. Tried
+  to shrink it but **fp32 is the only viable format**: dynamic **int8** drifted +0.15
+  toward false positives, and **fp16 won't load in onnxruntime** for this graph
+  (`Cast`/`Clip` op-type mismatches). Both rejected.
+- **Personal-use only (user's call), so the 1.7 GB model is neither bundled nor hosted:**
+  `model.onnx` + `tokenizer.json` sit in the local cache `~/.bud3eij/models/vanguard/`,
+  which both the source app and the frozen exe load (`_ensure_file` checks `_MEIPASS`
+  bundle → dev `vanguard_model/` → cache). Build command adds only **`--collect-all
+  tokenizers`** (onnxruntime/numpy already collected); `requirements.txt` += `tokenizers`.
+- **Known limitation (accepted):** desklib catches real AI text near-100% but **over-flags
+  some genuine human writing** as AI (a casual post scored 78%, a simple student essay
+  99% in testing) — the inherent false-positive problem of *every* AI detector. The UI
+  leads with a **disclaimer** ("estimate, not proof") and labels borderline text
+  "Uncertain"; results must never be treated as an accusation.
+- **Verified:** fp32 ONNX parity (Δ=0.0000) + tokenizer match; headless `--detect` on a
+  mixed file → `89% · AI`; quality probe (AI samples ≈100%, human mixed 50–99%); GUI
+  build smoke (panel, tier chip, highlight tags) — frozen-exe re-verify + rebuild below.
 
 ### 2026-06-09 — v2.3.5: Marquee filling progress bars (replace back-and-forth bars)
 - **Both Marquee tools now show a filling bar instead of the indeterminate

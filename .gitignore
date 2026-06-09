@@ -22,3 +22,10 @@ desktop.ini
 
 # --- Throwaway verification scripts ---
 _verify_*.py
+
+# --- v3.0 Vanguard model export (dev-only) ---
+# Throwaway export venv (torch etc.) and the large model working dir. The shipped
+# model lives in the user cache (~/.bud3eij/models/vanguard/); regenerate it with
+# tools/export_vanguard_model.py if needed.
+.venv_export/
+vanguard_model/

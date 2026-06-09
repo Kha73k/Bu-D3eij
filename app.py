@@ -49,6 +49,13 @@ from bud3eij.upscale import (  # noqa: F401
     UPSCALE_MODELS,
     upscale_image,
 )
+from bud3eij.vanguard import (  # noqa: F401
+    CONFIDENCE_TIERS,
+    DETECTOR_NAME,
+    FLAG_THRESHOLD,
+    detect_ai_text,
+    extract_document_text,
+)
 
 
 def resource_path(rel: str) -> str:
@@ -87,7 +94,8 @@ def save_history(history: list[dict]) -> None:
 # GUI
 # --------------------------------------------------------------------------- #
 APP_NAME = "Bu D3eij"
-NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "YouTube", "Marquee", "Tools"]
+NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "YouTube", "Marquee",
+             "Vanguard", "Tools"]
 
 # Logo-derived palette (extracted from AppLogo.png).
 RED = "#E11414"
@@ -107,7 +115,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "2.3.5"
+APP_VERSION = "3.0"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -127,7 +135,7 @@ def icon_key_for_ext(ext: str) -> str:
 NAV_ICONS = {
     "Home": "house", "Converter": "repeat", "Recent": "clock",
     "Batch Convert": "layers", "YouTube": "youtube", "Marquee": "sparkles",
-    "Tools": "wrench",
+    "Vanguard": "shield-check", "Tools": "wrench",
 }
 
 ctk.set_appearance_mode("Dark")
@@ -519,6 +527,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.batch_files: list[Path] = []
         self.marquee_file: Path | None = None
         self.upscale_file: Path | None = None
+        self.vanguard_file: Path | None = None
         self.history: list[dict] = load_history()
         self.appearance_mode = "Dark"  # toggled by the sun/moon button
         self._icon_cache: dict = {}  # (kind, name, size, colors) -> CTkImage
@@ -662,6 +671,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             "Batch Convert": self._build_batch(container),
             "YouTube": self._build_youtube(container),
             "Marquee": self._build_marquee(container),
+            "Vanguard": self._build_vanguard(container),
             "Home": self._build_home(container),
             "Recent": self._build_recent(container),
             "Tools": self._build_tools(container),
@@ -1933,9 +1943,221 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.up_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
             self.add_history(src, out, True)
 
+    # ===================================================================== #
+    # Vanguard — AI Text Detector
+    # ===================================================================== #
+    def _build_vanguard(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(4, weight=1)  # results row grows
+        self._section_header(
+            frame, "Vanguard",
+            "AI content detection — estimate how likely text is AI-generated.",
+        )
+
+        # ---- input card: paste text or upload a document ----
+        incard = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        incard.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 10))
+        incard.grid_columnconfigure(0, weight=1)
+
+        top = ctk.CTkFrame(incard, fg_color="transparent")
+        top.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 6))
+        top.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(top, text="Paste text below, or upload a .txt / .docx / .pdf",
+                     text_color=MUTED, anchor="w").grid(row=0, column=0, sticky="w")
+        self.vg_upload_btn = ctk.CTkButton(
+            top, text=" Upload file", width=130, height=32,
+            image=self._ui_icon("folder-open", 16), compound="left",
+            fg_color="transparent", border_width=1, border_color=MUTED,
+            text_color=NAV_TEXT, hover_color=("#EBE0E1", "#2A2426"),
+            command=self.browse_vanguard,
+        )
+        self.vg_upload_btn.grid(row=0, column=1, sticky="e")
+
+        self.vg_input = ctk.CTkTextbox(incard, height=170, wrap="word",
+                                       border_width=1, border_color=DROP_BORDER)
+        self.vg_input.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 6))
+        # Drag a file onto the box to load its text (no click-to-browse — it's editable).
+        try:
+            self.vg_input.drop_target_register(DND_FILES)
+            self.vg_input.dnd_bind("<<Drop>>", self.on_vanguard_drop)
+        except Exception as exc:  # noqa: BLE001
+            print("Vanguard drag & drop registration failed:", exc)
+        self.vg_source = ctk.CTkLabel(incard, text="Nothing loaded — type, paste, or drop a file.",
+                                      text_color=MUTED, anchor="w", justify="left", wraplength=620)
+        self.vg_source.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 14))
+
+        self.vg_btn = ctk.CTkButton(
+            frame, text=" Detect AI Text", height=46,
+            font=ctk.CTkFont(size=15, weight="bold"),
+            image=self._ui_icon("shield-check", 18, "#FFFFFF", "#FFFFFF"), compound="left",
+            command=self.on_vanguard_detect,
+        )
+        self.vg_btn.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 8))
+
+        self.vg_progress = ctk.CTkProgressBar(frame, height=8)
+        self.vg_progress.set(0)
+        self.vg_progress.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.vg_progress.grid_remove()  # only while analysing
+
+        # ---- results card (hidden until a run finishes) ----
+        self.vg_results = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        self.vg_results.grid(row=4, column=0, sticky="nsew", padx=24, pady=(0, 8))
+        self.vg_results.grid_columnconfigure(0, weight=1)
+        self.vg_results.grid_rowconfigure(2, weight=1)
+
+        head = ctk.CTkFrame(self.vg_results, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 2))
+        head.grid_columnconfigure(1, weight=1)
+        self.vg_score = ctk.CTkLabel(head, text="—", font=ctk.CTkFont(size=42, weight="bold"))
+        self.vg_score.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(head, text="  AI-likelihood", text_color=MUTED).grid(row=0, column=1, sticky="w")
+        self.vg_chip = ctk.CTkLabel(
+            head, text="", corner_radius=14, height=30, fg_color="transparent",
+            text_color="#FFFFFF", font=ctk.CTkFont(size=13, weight="bold"),
+        )
+        self.vg_chip.grid(row=0, column=2, sticky="e")
+
+        ctk.CTkLabel(
+            self.vg_results, text="Passages shaded red are the ones the model flags as "
+            "most likely AI-generated:", text_color=MUTED, anchor="w",
+            justify="left", wraplength=620,
+        ).grid(row=1, column=0, sticky="ew", padx=18, pady=(2, 4))
+
+        self.vg_out = ctk.CTkTextbox(self.vg_results, height=200, wrap="word")
+        self.vg_out.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 6))
+        self.vg_out.configure(state="disabled")
+
+        self.vg_disclaimer = ctk.CTkLabel(
+            self.vg_results,
+            text="⚠ Estimate only — not proof. AI detectors can be wrong, especially on "
+                 "edited, translated, or non-native-English writing. Don't use this to "
+                 "make accusations.",
+            text_color=MUTED, anchor="w", justify="left", wraplength=620,
+            font=ctk.CTkFont(size=11),
+        )
+        self.vg_disclaimer.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 14))
+        self.vg_results.grid_remove()
+
+        self.vg_status = ctk.CTkLabel(
+            frame, text="Paste or upload text, then Detect.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.vg_status.grid(row=5, column=0, sticky="w", padx=24, pady=(2, 14))
+        return frame
+
+    @staticmethod
+    def _vg_tier_color(tier: str) -> str:
+        if tier in ("Human", "Likely Human"):
+            return SUCCESS
+        if tier == "Uncertain":
+            return "#E59500"  # amber
+        return ERROR  # Likely AI / AI
+
+    # ---- vanguard actions ------------------------------------------------ #
+    def on_vanguard_drop(self, event):
+        paths = self._parse_drop(event)
+        if paths:
+            self.set_vanguard_file(paths[0])
+
+    def browse_vanguard(self):
+        path = filedialog.askopenfilename(
+            title="Select a .txt / .docx / .pdf",
+            filetypes=[("Documents", "*.txt *.docx *.pdf"), ("All files", "*.*")],
+        )
+        if path:
+            self.set_vanguard_file(Path(path))
+
+    def set_vanguard_file(self, path: Path):
+        if not path.is_file():
+            self.vg_source.configure(text="Please drop a single file.", text_color="orange")
+            return
+        ext = detect_format(path)
+        if ext not in ("txt", "docx", "pdf"):
+            self.vg_source.configure(
+                text=f"Unsupported: .{ext or '?'} — use .txt, .docx, or .pdf.",
+                text_color="orange")
+            return
+        try:
+            text = extract_document_text(path)
+        except Exception as exc:  # noqa: BLE001
+            self.vg_source.configure(text=f"Couldn't read {path.name}: {exc}", text_color=ERROR)
+            return
+        self.vanguard_file = path
+        self.vg_input.delete("1.0", "end")
+        self.vg_input.insert("1.0", text)
+        self.vg_source.configure(
+            text=f"Loaded {path.name}  ·  {len(text.split()):,} words", text_color=MUTED)
+
+    def on_vanguard_detect(self):
+        text = self.vg_input.get("1.0", "end").strip()
+        if len(text.split()) < 5:
+            self.vg_status.configure(
+                text="Please enter or upload some text first.", text_color="orange")
+            return
+        self.vg_btn.configure(state="disabled")
+        self.vg_progress.grid()
+        self.vg_progress.configure(mode="determinate")
+        self.vg_progress.set(0)
+        self.vg_status.configure(
+            text="Analysing… (loading the detector model — the first run after launch "
+                 "is slower).",
+            text_color=MUTED)
+        threading.Thread(target=self._vanguard_worker, args=(text,), daemon=True).start()
+
+    def _vanguard_worker(self, text: str):
+        def on_progress(frac: float):
+            self.after(0, self._set_vg_progress, frac)
+
+        try:
+            result = detect_ai_text(text, is_file=False, progress=on_progress)
+            self.after(0, self._vanguard_done, result, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._vanguard_done, None, exc)
+
+    def _set_vg_progress(self, frac: float):
+        self.vg_progress.set(max(0.0, min(1.0, frac)))
+        self.vg_status.configure(text=f"Analysing…  {int(frac * 100)}%", text_color=MUTED)
+
+    def _vanguard_done(self, result: dict | None, error: Exception | None):
+        self.vg_progress.set(1.0 if not error else 0)
+        self.vg_progress.grid_remove()
+        self.vg_progress.set(0)
+        self.vg_btn.configure(state="normal")
+        if error:
+            self.vg_status.configure(text=f"✕  {error}", text_color=ERROR)
+            return
+        self._render_vanguard_result(result)
+
+    def _render_vanguard_result(self, result: dict):
+        score, tier = result["score"], result["tier"]
+        color = self._vg_tier_color(tier)
+        self.vg_score.configure(text=f"{score}%", text_color=color)
+        self.vg_chip.configure(text=f"  {tier}  ", fg_color=color)
+
+        box = self.vg_out._textbox  # underlying tk.Text for tag-based highlighting
+        self.vg_out.configure(state="normal")
+        box.delete("1.0", "end")
+        box.insert("1.0", result["text"])
+        box.tag_config("ai", background="#C0392B", foreground="#FFFFFF")
+        flagged = 0
+        for sp in result["spans"]:
+            if sp["p_ai"] >= FLAG_THRESHOLD:
+                flagged += 1
+                box.tag_add("ai", f"1.0 + {sp['start']} chars", f"1.0 + {sp['end']} chars")
+        self.vg_out.configure(state="disabled")
+
+        self.vg_results.grid()
+        caveat = "  ⚠ Short text — treat with extra caution." if result["too_short"] else ""
+        self.vg_status.configure(
+            text=f"✓  {tier} · {score}% AI-likelihood · {flagged} of {len(result['spans'])} "
+                 f"passages flagged · {result['model']}.{caveat}",
+            text_color=color)
+
 
 def _run_cli(args) -> int:
-    """Headless mode: --convert, --download, --remove-bg, or --upscale. Returns exit code."""
+    """Headless mode: --convert, --download, --remove-bg, --upscale, or --detect. Returns exit code."""
     import argparse
 
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Bu D3eij file converter")
@@ -1954,6 +2176,10 @@ def _run_cli(args) -> int:
     parser.add_argument(
         "--upscale", nargs="+", metavar="FILE [TARGET]",
         help="Upscale FILE to TARGET (1080p/2K/4K; default 2K) next to it, and exit.",
+    )
+    parser.add_argument(
+        "--detect", metavar="FILE",
+        help="Estimate the AI-likelihood of a .txt/.docx/.pdf and exit.",
     )
     ns = parser.parse_args(args)
     if ns.convert:
@@ -1988,6 +2214,15 @@ def _run_cli(args) -> int:
         try:
             out = upscale_image(src, target=target)
             print(f"Saved: {out}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.detect:
+        try:
+            r = detect_ai_text(ns.detect, is_file=True)
+            short = "  (short text — low confidence)" if r["too_short"] else ""
+            print(f"{r['score']}% AI-likelihood · {r['tier']} · {r['model']}{short}")
             return 0
         except Exception as exc:  # noqa: BLE001
             print(f"Error: {exc}", file=sys.stderr)
