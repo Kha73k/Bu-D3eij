@@ -1,0 +1,189 @@
+"""Image upscaling (Real-ESRGAN via onnxruntime) for Bu D3eij — a Marquee tool.
+
+Upscales a low-quality image to an exact target resolution (1080p / 2K / 4K)
+using the `realesr-general-x4v3` super-resolution model, which produces clean,
+sharp, natural results on real-world (compressed/noisy) images. The model runs on
+the already-bundled `onnxruntime` (no PyTorch) and is downloaded & cached on first
+use, like the rembg models. If the model can't be loaded, it falls back to
+high-quality Lanczos resampling so the tool never hard-fails.
+
+After upscaling, the image is fit to the exact target with letterboxing (the whole
+image is preserved and padded with bars), so output is always exactly W x H.
+"""
+from __future__ import annotations
+
+import sys
+import urllib.request
+from pathlib import Path
+
+from .formats import ConversionError, IMAGE_EXTS, unique_path
+
+# Target label -> exact output resolution (W, H).
+TARGETS: dict[str, tuple[int, int]] = {
+    "1080p": (1920, 1080),
+    "2K": (2560, 1440),
+    "4K": (3840, 2160),
+}
+DEFAULT_TARGET = "2K"
+
+# Upscaler quality tiers -> (model filename, download URL, one-line blurb). Both
+# expose float32 NCHW [0,1] I/O and upscale x4, so they share one inference path.
+# Each model downloads once to ~/.bud3eij/models and is cached thereafter.
+_MODEL_DIR = Path.home() / ".bud3eij" / "models"
+UPSCALE_MODELS: dict[str, tuple[str, str, str]] = {
+    "Fast": (
+        "realesr-general-x4v3.onnx",
+        "https://huggingface.co/OwlMaster/AllFilesRope/resolve/main/realesr-general-x4v3.onnx",
+        "Fastest · great on real low-quality photos (~4.7 MB)",
+    ),
+    "Max": (
+        "RealESRGAN_x4plus.fp16.onnx",
+        "https://huggingface.co/OwlMaster/AllFilesRope/resolve/main/RealESRGAN_x4plus.fp16.onnx",
+        "Max detail · sharper textures, much slower on CPU (~34 MB)",
+    ),
+}
+DEFAULT_UPSCALE_TIER = "Fast"
+
+_SCALE = 4          # the models upscale x4 per pass
+_MAX_PASSES = 2     # cap repeated passes (x16) for very small inputs
+_TILE = 256         # input-pixel tile size (bounds memory on large inputs)
+_OVERLAP = 16       # tile overlap (input px) to avoid seams
+
+_UPSCALE_SESSIONS: dict = {}  # tier -> onnxruntime session (model loaded once each)
+
+
+def _ensure_model(tier: str) -> Path:
+    """Return the local path for `tier`'s model, downloading + caching on first use."""
+    filename, url, _ = UPSCALE_MODELS[tier]
+    # Allow a bundled copy (frozen exe) to satisfy the requirement offline.
+    base = getattr(sys, "_MEIPASS", None)
+    if base:
+        bundled = Path(base) / "bud3eij" / "models" / filename
+        if bundled.exists():
+            return bundled
+    dest = _MODEL_DIR / filename
+    if dest.exists() and dest.stat().st_size > 1_000_000:
+        return dest
+    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    urllib.request.urlretrieve(url, tmp)  # noqa: S310 - pinned HTTPS URL
+    if tmp.stat().st_size < 1_000_000:
+        tmp.unlink(missing_ok=True)
+        raise ConversionError("Downloaded upscaler model looks corrupt (too small).")
+    tmp.replace(dest)
+    return dest
+
+
+def _session(tier: str):
+    sess = _UPSCALE_SESSIONS.get(tier)
+    if sess is None:
+        import onnxruntime as ort  # lazy: heavy
+
+        path = _ensure_model(tier)
+        sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        _UPSCALE_SESSIONS[tier] = sess
+    return sess
+
+
+def _run_tile(session, tile):
+    """Run the model on one HxWx3 float32[0,1] tile; return the x4 HxWx3 result."""
+    import numpy as np
+
+    inp = session.get_inputs()[0].name
+    x = tile.transpose(2, 0, 1)[None, ...]            # HWC -> 1CHW
+    y = session.run(None, {inp: x})[0]                # 1CHW (x4)
+    out = y[0].transpose(1, 2, 0)                     # -> HWC
+    return np.clip(out, 0.0, 1.0)
+
+
+def _sr_x4(session, img):
+    """Upscale a HxWx3 float32[0,1] image x4, tiling large inputs to bound memory."""
+    import numpy as np
+
+    h, w, _ = img.shape
+    if h <= _TILE and w <= _TILE:
+        return _run_tile(session, img)
+    out = np.zeros((h * _SCALE, w * _SCALE, 3), dtype=np.float32)
+    for y in range(0, h, _TILE):
+        for x in range(0, w, _TILE):
+            y0, y1 = max(0, y - _OVERLAP), min(h, y + _TILE + _OVERLAP)
+            x0, x1 = max(0, x - _OVERLAP), min(w, x + _TILE + _OVERLAP)
+            up = _run_tile(session, img[y0:y1, x0:x1])
+            # copy only the non-overlap core into the output canvas
+            ky, kx = (y - y0) * _SCALE, (x - x0) * _SCALE
+            hk = (min(h, y + _TILE) - y) * _SCALE
+            wk = (min(w, x + _TILE) - x) * _SCALE
+            out[y * _SCALE:y * _SCALE + hk, x * _SCALE:x * _SCALE + wk] = up[ky:ky + hk, kx:kx + wk]
+    return out
+
+
+def _fit_letterbox(img, target_w: int, target_h: int):
+    """Fit `img` (PIL) into target W x H preserving aspect ratio, padding with
+    black bars (letterbox). Output is always exactly target_w x target_h."""
+    from PIL import Image
+
+    w, h = img.size
+    scale = min(target_w / w, target_h / h)
+    nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
+    resized = img.resize((nw, nh), Image.LANCZOS)
+    canvas = Image.new("RGB", (target_w, target_h), (0, 0, 0))
+    canvas.paste(resized, ((target_w - nw) // 2, (target_h - nh) // 2))
+    return canvas
+
+
+def upscale_image(src, out_path=None, target: str = DEFAULT_TARGET,
+                  model: str = DEFAULT_UPSCALE_TIER, fit: str = "letterbox") -> Path:
+    """Upscale `src` to an exact target resolution; return the output path.
+
+    `target` is a key of `TARGETS` (1080p / 2K / 4K). `model` is an upscaler tier
+    in `UPSCALE_MODELS` (Fast = realesr-general-x4v3, Max = RealESRGAN_x4plus). The
+    image is super-resolved with Real-ESRGAN (enough x4 passes to exceed the fitted
+    size), then Lanczos-fit and letterboxed to exactly W x H. Output defaults to PNG
+    (lossless); a chosen .jpg/.webp extension is honoured. Never clobbers a file.
+    """
+    from PIL import Image
+    import numpy as np
+
+    src = Path(src)
+    ext = src.suffix.lower().lstrip(".")
+    if ext not in IMAGE_EXTS:
+        raise ConversionError(f"Upscaling needs an image; got .{ext or '?'}")
+    if target not in TARGETS:
+        raise ConversionError(f"Unknown target resolution: {target}")
+    if model not in UPSCALE_MODELS:
+        model = DEFAULT_UPSCALE_TIER
+    target_w, target_h = TARGETS[target]
+
+    with Image.open(src) as im:
+        img = im.convert("RGB")
+        w, h = img.size
+        fit_scale = min(target_w / w, target_h / h)
+
+        big = img
+        if fit_scale > 1.0:  # input is smaller than the target -> super-resolve
+            try:
+                session = _session(model)
+                arr = np.asarray(img, dtype=np.float32) / 255.0
+                factor = 1
+                passes = 0
+                while factor < fit_scale and passes < _MAX_PASSES:
+                    arr = _sr_x4(session, arr)
+                    factor *= _SCALE
+                    passes += 1
+                big = Image.fromarray((np.clip(arr, 0.0, 1.0) * 255.0 + 0.5).astype("uint8"))
+            except Exception as exc:  # noqa: BLE001 - degrade to Lanczos, never hard-fail
+                print(f"[upscale] AI model unavailable, using Lanczos fallback: {exc!r}",
+                      file=sys.stderr)
+                big = img  # _fit_letterbox will Lanczos-enlarge to the fitted size
+
+        result = _fit_letterbox(big, target_w, target_h)
+
+    out = Path(out_path) if out_path else src.with_name(f"{src.stem}_{target}.png")
+    suffix = out.suffix.lower()
+    if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
+        out = out.with_suffix(".png")
+        suffix = ".png"
+    out = unique_path(out)  # never clobber
+    fmt = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".webp": "WEBP"}[suffix]
+    result.save(out, fmt)
+    return out

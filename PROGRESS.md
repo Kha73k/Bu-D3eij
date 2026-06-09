@@ -4,21 +4,54 @@ Running log of what's done and what's next. Update at the end of each session.
 
 _Last updated: 2026-06-08_
 
-## Status: working app + standalone exe — v2.2 (bud3eij package restructure)
+## Status: working app + standalone exe — v2.3 (Marquee Image Upscaler)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
-downloads, and a **Marquee** image-editing section (Background Remover) are
-complete and verified — **both from source and in the rebuilt standalone exe**.
-v1.1 = PowerPoint + Markdown; v1.2 = bug fixes; v1.3 = YouTube downloads +
-sun/moon toggle; v1.4 = visual redesign (file-type icons, hero Home, table
-Recent); v1.4.5 = animated "Convert Now" button; v2.0 = Marquee / Background
-Remover (rembg); v2.1 = Marquee Flash/Mid/Omega model selector; **v2.2 = split
-the logic into a `bud3eij/` package (foundation for the image-editing section)**.
+downloads, and a **Marquee** image-editing section (Background Remover **+ Image
+Upscaler**) are complete and verified — **both from source and in the rebuilt
+standalone exe**. v1.1 = PowerPoint + Markdown; v1.2 = bug fixes; v1.3 = YouTube
+downloads + sun/moon toggle; v1.4 = visual redesign (file-type icons, hero Home,
+table Recent); v1.4.5 = animated "Convert Now" button; v2.0 = Marquee / Background
+Remover (rembg); v2.1 = Marquee Flash/Mid/Omega model selector; v2.2 = split the
+logic into a `bud3eij/` package; **v2.3 = Marquee Image Upscaler (Real-ESRGAN)**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-09 — v2.3: Marquee Image Upscaler (Real-ESRGAN)
+- **Second Marquee tool.** Marquee became a multi-tool page: `_build_marquee` now
+  renders a **tool switcher** (`CTkSegmentedButton`: Background Remover / Upscaler)
+  over two self-contained panels (`_build_mq_bgremover` moved the existing bg UI;
+  `_build_mq_upscaler` is new), swapped by `_show_mq_tool`.
+- **Image Upscaler:** drop a low-res image → pick **QUALITY** (Fast/Max) + **TARGET**
+  (1080p/2K/4K) → clean, sharp upscale saved where you choose. New module
+  `bud3eij/upscale.py`: `upscale_image(src, out, target, model)` runs **Real-ESRGAN**
+  on the **already-bundled onnxruntime** (no PyTorch); enough ×4 passes (tiled, capped
+  ×16) to exceed the fitted size, then Lanczos-fit + **letterbox** to the exact
+  `TARGETS` resolution. Output always exactly W×H; PNG default; Lanczos fallback if the
+  model can't load. Handlers `on_upscale_*`/`_on_up_model_change`/`_upscale_worker`/
+  `_upscale_done` mirror the bg ones; indeterminate progress (CPU SR is slow toward
+  4K). CLI `--upscale FILE [TARGET]`. `APP_VERSION = "2.3"`.
+- **QUALITY tiers (`UPSCALE_MODELS`, default Fast):** **Fast** =
+  `realesr-general-x4v3` (~4.7 MB, SRVGGNetCompact — fast, great on real low-quality
+  photos); **Max** = `RealESRGAN_x4plus.fp16` (~34 MB, RRDBNet — sharper textures but
+  *much* slower on CPU). Both expose float32 NCHW [0,1] I/O + exact ×4 (verified on
+  onnxruntime, dynamic shape), so they share one inference path; sessions cached per
+  tier in `_UPSCALE_SESSIONS`. Each downloads once to `~/.bud3eij/models/` (or a
+  bundled `bud3eij/models/` copy), then caches. **Build command unchanged**
+  (onnxruntime/numpy already bundled; the module rides on the static import).
+  `requirements.txt`: added `numpy`/`onnxruntime` explicitly (now direct deps).
+- **Verified from source:** headless `upscale_image` for 1080p/2K/4K → **exact**
+  1920×1080 / 2560×1440 / 3840×2160, RGB, black letterbox bars on a 4:3 input, AI
+  path used (no fallback); **both tiers** to 1080p → exact (Fast ~4.8 s, Max ~68 s,
+  confirming the speed trade); GUI smoke (tool switcher swaps panels, QUALITY +
+  TARGET selectors, bg remover intact, no frame regressions); `--upscale` CLI.
+  **Frozen exe rebuilt + re-verified** (final build with the Fast/Max selector):
+  `--upscale <img> 2K` → exact 2560×1440 PNG (onnxruntime + Real-ESRGAN model path
+  work frozen, using the `~/.bud3eij/models` cache); GUI launches clean. (Killed any
+  running `Bu D3eij.exe` before each build to avoid the file-lock COLLECT failure.)
 
 ### 2026-06-08 — v2.2: restructure — split logic into a `bud3eij/` package
 - **Why:** ahead of growing the Marquee image-editing section, `app.py` had reached

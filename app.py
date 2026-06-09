@@ -42,6 +42,13 @@ from bud3eij.background import (  # noqa: F401
     DEFAULT_BG_TIER,
     remove_background,
 )
+from bud3eij.upscale import (  # noqa: F401
+    DEFAULT_TARGET,
+    DEFAULT_UPSCALE_TIER,
+    TARGETS,
+    UPSCALE_MODELS,
+    upscale_image,
+)
 
 
 def resource_path(rel: str) -> str:
@@ -100,7 +107,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "2.2"
+APP_VERSION = "2.3"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -511,6 +518,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.export_dir: Path | None = None
         self.batch_files: list[Path] = []
         self.marquee_file: Path | None = None
+        self.upscale_file: Path | None = None
         self.history: list[dict] = load_history()
         self.appearance_mode = "Dark"  # toggled by the sun/moon button
         self._icon_cache: dict = {}  # (kind, name, size, colors) -> CTkImage
@@ -1496,16 +1504,50 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _build_marquee(self, parent) -> ctk.CTkFrame:
         frame = ctk.CTkFrame(parent)
         frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
         self._section_header(
             frame, "Marquee",
-            "Remove an image background — export a clean transparent PNG.",
+            "Image editing — remove backgrounds or upscale to a crisp resolution.",
         )
 
-        # ---- drop zone ----
-        self.mq_drop = ctk.CTkFrame(
-            frame, height=200, corner_radius=14, border_width=2, border_color=DROP_BORDER
+        # ---- tool switcher ----
+        switch = ctk.CTkFrame(frame, fg_color="transparent")
+        switch.grid(row=1, column=0, sticky="w", padx=24, pady=(2, 6))
+        self.mq_tool = ctk.CTkSegmentedButton(
+            switch, values=["Background Remover", "Upscaler"],
+            command=self._show_mq_tool,
+            selected_color=RED, selected_hover_color=RED_HOVER,
         )
-        self.mq_drop.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 14))
+        self.mq_tool.set("Background Remover")
+        self.mq_tool.grid(row=0, column=0)
+
+        # ---- tool panels (only one shown at a time) ----
+        container = ctk.CTkFrame(frame, fg_color="transparent")
+        container.grid(row=2, column=0, sticky="nsew")
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_rowconfigure(0, weight=1)
+        self.mq_panels = {
+            "Background Remover": self._build_mq_bgremover(container),
+            "Upscaler": self._build_mq_upscaler(container),
+        }
+        for p in self.mq_panels.values():
+            p.grid(row=0, column=0, sticky="nsew")
+        self._show_mq_tool("Background Remover")
+        return frame
+
+    def _show_mq_tool(self, name: str):
+        for n, panel in self.mq_panels.items():
+            (panel.grid if n == name else panel.grid_remove)()
+
+    # ---- marquee: background remover panel ------------------------------- #
+    def _build_mq_bgremover(self, parent) -> ctk.CTkFrame:
+        panel = ctk.CTkFrame(parent, fg_color="transparent")
+        panel.grid_columnconfigure(0, weight=1)
+
+        self.mq_drop = ctk.CTkFrame(
+            panel, height=200, corner_radius=14, border_width=2, border_color=DROP_BORDER
+        )
+        self.mq_drop.grid(row=0, column=0, sticky="ew", padx=24, pady=(4, 14))
         self.mq_drop.grid_propagate(False)
         self.mq_drop.grid_columnconfigure(0, weight=1)
         self.mq_drop.grid_rowconfigure(0, weight=1)
@@ -1528,9 +1570,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self._make_labels_wrap(self.mq_drop, (self.mq_primary, self.mq_secondary))
 
-        # ---- controls card ----
-        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
-        card.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 12))
+        card = ctk.CTkFrame(panel, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 12))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card, text="Drops the background and keeps your subject on a fully "
@@ -1538,7 +1579,6 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             text_color=MUTED, anchor="w", justify="left", wraplength=620,
         ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
 
-        # ---- quality (model tier) selector ----
         qual = ctk.CTkFrame(card, fg_color="transparent")
         qual.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 2))
         ctk.CTkLabel(qual, text="QUALITY", font=ctk.CTkFont(size=11, weight="bold"),
@@ -1563,17 +1603,107 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.mq_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 16))
 
-        self.mq_progress = ctk.CTkProgressBar(frame, height=8)
+        self.mq_progress = ctk.CTkProgressBar(panel, height=8)
         self.mq_progress.set(0)
-        self.mq_progress.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.mq_progress.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 4))
         self.mq_progress.grid_remove()  # only shown while processing
 
         self.mq_status = ctk.CTkLabel(
-            frame, text="Drop an image to begin.", text_color=MUTED,
+            panel, text="Drop an image to begin.", text_color=MUTED,
             wraplength=620, justify="left", anchor="w",
         )
-        self.mq_status.grid(row=4, column=0, sticky="w", padx=24, pady=(4, 16))
-        return frame
+        self.mq_status.grid(row=3, column=0, sticky="w", padx=24, pady=(4, 16))
+        return panel
+
+    # ---- marquee: upscaler panel ----------------------------------------- #
+    def _build_mq_upscaler(self, parent) -> ctk.CTkFrame:
+        panel = ctk.CTkFrame(parent, fg_color="transparent")
+        panel.grid_columnconfigure(0, weight=1)
+
+        self.up_drop = ctk.CTkFrame(
+            panel, height=200, corner_radius=14, border_width=2, border_color=DROP_BORDER
+        )
+        self.up_drop.grid(row=0, column=0, sticky="ew", padx=24, pady=(4, 14))
+        self.up_drop.grid_propagate(False)
+        self.up_drop.grid_columnconfigure(0, weight=1)
+        self.up_drop.grid_rowconfigure(0, weight=1)
+        inner = ctk.CTkFrame(self.up_drop, fg_color="transparent")
+        inner.grid(row=0, column=0)
+        self.up_drop_icon = self._ui_icon("sparkles", 46, light=RED, dark=RED_BRIGHT)
+        self.up_icon_label = ctk.CTkLabel(inner, text="", image=self.up_drop_icon)
+        self.up_icon_label.pack(pady=(0, 8))
+        self.up_primary = ctk.CTkLabel(
+            inner, text="Drag & drop a low-res image here",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        )
+        self.up_primary.pack()
+        self.up_secondary = ctk.CTkLabel(
+            inner, text="or click to browse  ·  JPG · PNG · WEBP", text_color=MUTED)
+        self.up_secondary.pack(pady=(2, 0))
+        self._register_drop(
+            self.up_drop,
+            (self.up_drop, inner, self.up_icon_label, self.up_primary, self.up_secondary),
+            self.on_upscale_drop, self.browse_upscale,
+        )
+        self._make_labels_wrap(self.up_drop, (self.up_primary, self.up_secondary))
+
+        card = ctk.CTkFrame(panel, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 12))
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card, text="AI super-resolution (Real-ESRGAN) for clean, sharp detail, then "
+                       "fit to the exact resolution with letterboxing.",
+            text_color=MUTED, anchor="w", justify="left", wraplength=620,
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
+
+        # quality (model tier) selector
+        qual = ctk.CTkFrame(card, fg_color="transparent")
+        qual.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 2))
+        ctk.CTkLabel(qual, text="QUALITY", font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=MUTED).grid(row=0, column=0, padx=(0, 12))
+        self.up_model = ctk.CTkSegmentedButton(
+            qual, values=list(UPSCALE_MODELS), command=self._on_up_model_change,
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.up_model.set(DEFAULT_UPSCALE_TIER)
+        self.up_model.grid(row=0, column=1)
+        self.up_model_caption = ctk.CTkLabel(
+            card, text=UPSCALE_MODELS[DEFAULT_UPSCALE_TIER][2], text_color=MUTED,
+            anchor="w", justify="left", wraplength=620,
+        )
+        self.up_model_caption.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 10))
+
+        # target resolution selector
+        res = ctk.CTkFrame(card, fg_color="transparent")
+        res.grid(row=3, column=0, sticky="w", padx=18, pady=(0, 12))
+        ctk.CTkLabel(res, text="TARGET", font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=MUTED).grid(row=0, column=0, padx=(0, 12))
+        self.up_target = ctk.CTkSegmentedButton(
+            res, values=list(TARGETS),
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.up_target.set(DEFAULT_TARGET)
+        self.up_target.grid(row=0, column=1)
+
+        self.up_btn = ctk.CTkButton(
+            card, text=" Upscale Image", height=46,
+            font=ctk.CTkFont(size=15, weight="bold"),
+            image=self._ui_icon("sparkles", 18, "#FFFFFF", "#FFFFFF"), compound="left",
+            command=self.on_upscale_run, state="disabled",
+        )
+        self.up_btn.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
+
+        self.up_progress = ctk.CTkProgressBar(panel, height=8)
+        self.up_progress.set(0)
+        self.up_progress.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.up_progress.grid_remove()  # only shown while processing
+
+        self.up_status = ctk.CTkLabel(
+            panel, text="Drop a low-res image to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.up_status.grid(row=3, column=0, sticky="w", padx=24, pady=(4, 16))
+        return panel
 
     # ---- marquee actions ------------------------------------------------- #
     def _on_mq_model_change(self, tier: str):
@@ -1672,9 +1802,110 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.mq_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
             self.add_history(src, out, True)
 
+    # ---- marquee: upscaler actions --------------------------------------- #
+    def _on_up_model_change(self, tier: str):
+        self.up_model_caption.configure(text=UPSCALE_MODELS.get(tier, ("", "", ""))[2])
+
+    def on_upscale_drop(self, event):
+        paths = self._parse_drop(event)
+        if paths:
+            self.set_upscale_file(paths[0])
+
+    def browse_upscale(self):
+        path = filedialog.askopenfilename(
+            title="Select an image to upscale",
+            filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tiff"),
+                       ("All files", "*.*")],
+        )
+        if path:
+            self.set_upscale_file(Path(path))
+
+    def set_upscale_file(self, path: Path):
+        if not path.is_file():
+            self.up_status.configure(text="Please drop a single image.", text_color="orange")
+            return
+        ext = detect_format(path)
+        self.up_primary.configure(text=path.name)
+        if ext not in IMAGE_EXTS:
+            self.upscale_file = None
+            if self.up_drop_icon is not None:
+                self.up_icon_label.configure(image=self.up_drop_icon)
+            self.up_secondary.configure(text="Not an image  ·  click to choose another")
+            self.up_btn.configure(state="disabled")
+            self.up_status.configure(
+                text=f"Unsupported file: .{ext or '?'} — pick an image.", text_color="orange")
+            return
+        self.upscale_file = path
+        dims = "?"
+        try:
+            from PIL import Image
+
+            with Image.open(path) as im:
+                dims = f"{im.width}×{im.height}"
+        except Exception:  # noqa: BLE001
+            pass
+        ft_icon = self._filetype_icon(ext, 52)
+        if ft_icon is not None:
+            self.up_icon_label.configure(image=ft_icon)
+        self.up_secondary.configure(text=f"{dims} source  ·  click to choose another")
+        self.up_btn.configure(state="normal")
+        self.up_status.configure(text=f"Ready to upscale {path.name}", text_color=MUTED)
+
+    def on_upscale_run(self):
+        src = self.upscale_file
+        if not src:
+            return
+        target = self.up_target.get() or DEFAULT_TARGET
+        tier = self.up_model.get() or DEFAULT_UPSCALE_TIER
+        out = filedialog.asksaveasfilename(
+            title="Save upscaled image as",
+            defaultextension=".png",
+            initialfile=f"{src.stem}_{target}.png",
+            filetypes=[("PNG image", "*.png"), ("JPEG image", "*.jpg"),
+                       ("WEBP image", "*.webp")],
+        )
+        if not out:
+            self.up_status.configure(
+                text="Cancelled (no save location chosen).", text_color=MUTED)
+            return
+        self.up_btn.configure(state="disabled")
+        self.up_progress.grid()
+        self.up_progress.configure(mode="indeterminate")
+        self.up_progress.start()
+        slow = "  This can take a while on CPU." if tier == "Max" else ""
+        self.up_status.configure(
+            text=f"Upscaling to {target} with {tier}… (AI super-resolution; the model "
+                 f"downloads once on first use).{slow}",
+            text_color=MUTED,
+        )
+        threading.Thread(
+            target=self._upscale_worker, args=(src, Path(out), target, tier), daemon=True
+        ).start()
+
+    def _upscale_worker(self, src: Path, out: Path, target: str, tier: str):
+        try:
+            result = upscale_image(src, out, target, tier)
+            self.after(0, self._upscale_done, src, result, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._upscale_done, src, None, exc)
+
+    def _upscale_done(self, src: Path, out: Path | None, error: Exception | None):
+        self.up_progress.stop()
+        self.up_progress.grid_remove()
+        self.up_progress.configure(mode="determinate")
+        self.up_progress.set(0)
+        self.up_btn.configure(state="normal")
+        if error:
+            self.up_status.configure(text=f"✕  {error}", text_color=ERROR)
+            self.add_history(src, None, False, error)
+        else:
+            self.up_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
+            self.add_history(src, out, True)
+
 
 def _run_cli(args) -> int:
-    """Headless mode: --convert, --download, or --remove-bg. Returns an exit code."""
+    """Headless mode: --convert, --download, --remove-bg, or --upscale. Returns exit code."""
     import argparse
 
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Bu D3eij file converter")
@@ -1689,6 +1920,10 @@ def _run_cli(args) -> int:
     parser.add_argument(
         "--remove-bg", metavar="FILE",
         help="Remove FILE's background, save a transparent PNG next to it, and exit.",
+    )
+    parser.add_argument(
+        "--upscale", nargs="+", metavar="FILE [TARGET]",
+        help="Upscale FILE to TARGET (1080p/2K/4K; default 2K) next to it, and exit.",
     )
     ns = parser.parse_args(args)
     if ns.convert:
@@ -1712,6 +1947,16 @@ def _run_cli(args) -> int:
     if ns.remove_bg:
         try:
             out = remove_background(ns.remove_bg)
+            print(f"Saved: {out}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.upscale:
+        src = ns.upscale[0]
+        target = ns.upscale[1] if len(ns.upscale) > 1 else DEFAULT_TARGET
+        try:
+            out = upscale_image(src, target=target)
             print(f"Saved: {out}")
             return 0
         except Exception as exc:  # noqa: BLE001

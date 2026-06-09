@@ -125,6 +125,13 @@ still apply; only the file a function lives in changed.
   GUI **YouTube** page (`_build_youtube` + `on_youtube_download`/`_youtube_worker`/
   `_yt_hook`) and the `--download URL FORMAT` CLI both call it. Output folder is
   asked per-download (filedialog); results go through `add_history`.
+- **Marquee = a multi-tool image-editing page (tool switcher added v2.3).**
+  `_build_marquee` is now a shared `_section_header` + a `CTkSegmentedButton`
+  (`self.mq_tool`: "Background Remover" / "Upscaler") + a container holding two
+  self-contained panels, `_build_mq_bgremover` and `_build_mq_upscaler`, swapped by
+  `_show_mq_tool` (grid/grid_remove). Each panel keeps its own drop zone, controls,
+  progress bar, and status, with its own `mq_*`/`up_*` attrs and handlers. Add the
+  next image tool as a third value + `_build_mq_<tool>` panel.
 - **Marquee → Background Remover (v2.0, model selector in v2.1):**
   `remove_background(src, out_path=None, model="isnet-general-use")` (rembg, lazy
   import) opens the image, runs the chosen rembg model, and saves a transparent
@@ -138,13 +145,34 @@ still apply; only the file a function lives in changed.
   big/slow). Each model downloads its own `.onnx` into `~/.u2net/` on first use,
   then caches — **all three ride on the existing `--collect-all rembg` bundle, so
   the build command does NOT change** (rebuild the exe only to embed new `app.py`).
-  The GUI **Marquee** page (`_build_marquee` + `_on_mq_model_change`/
+  The bg-remover panel (`_build_mq_bgremover` + `_on_mq_model_change`/
   `on_marquee_drop`/`browse_marquee`/`set_marquee_file`/`on_marquee_remove`/
   `_marquee_worker`/`_marquee_done`) validates the drop is an image (`IMAGE_EXTS`),
   asks the output path per-run via `asksaveasfilename` (defaults `<stem>_no-bg.png`),
   shows an **indeterminate** progress bar while the worker thread runs (rembg has no
   progress callback), and records the result via `add_history`. Nav icon reuses the
   bundled `assets/ui/sparkles.png`.
+- **Marquee → Image Upscaler (v2.3):** `upscale_image(src, out_path=None,
+  target="2K", model="Fast", fit="letterbox")` in `bud3eij/upscale.py` (lazy import)
+  super-resolves a low-quality image with **Real-ESRGAN** on the already-bundled
+  **onnxruntime** — *no PyTorch*. Runs enough ×4 passes (tiled, capped at ×16) to
+  exceed the fitted size, then Lanczos-fits + **letterboxes** to the exact `TARGETS`
+  resolution (1080p 1920×1080 / 2K 2560×1440 / 4K 3840×2160) — output is always
+  exactly W×H. Always saves (PNG default; honours a chosen `.jpg`/`.webp`), via
+  `unique_path`. Falls back to Lanczos if the model can't load (never hard-fails).
+  **QUALITY tiers** in `UPSCALE_MODELS` (`DEFAULT_UPSCALE_TIER = "Fast"`): **Fast** =
+  `realesr-general-x4v3` (~4.7 MB, SRVGGNetCompact, fast — best on real low-quality
+  photos), **Max** = `RealESRGAN_x4plus.fp16` (~34 MB, RRDBNet, sharper textures but
+  *much* slower on CPU — ~15× in tests). Both expose float32 NCHW [0,1] I/O + ×4, so
+  they share one inference path; sessions cached per tier in `_UPSCALE_SESSIONS`. Each
+  model downloads once to `~/.bud3eij/models/` (or a bundled `bud3eij/models/` copy
+  via `sys._MEIPASS`), then caches — **build command does NOT change** (onnxruntime/
+  numpy already collected; the module rides on the static `from bud3eij.upscale import
+  …`). GUI panel `_build_mq_upscaler` + `_on_up_model_change`/`on_upscale_drop`/
+  `browse_upscale`/`set_upscale_file`/`on_upscale_run`/`_upscale_worker`/
+  `_upscale_done`; **QUALITY** (`self.up_model`, Fast/Max) + **TARGET**
+  (`self.up_target`, 1080p/2K/4K) `CTkSegmentedButton`s; indeterminate progress (CPU
+  SR is slow, esp. Max → 4K). CLI: `--upscale FILE [TARGET]` (uses the Fast tier).
 - **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube,
   Marquee, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
   appearance toggle** (`_toggle_appearance`, `SUN_GLYPH`/`MOON_GLYPH` in
@@ -194,9 +222,10 @@ still apply; only the file a function lives in changed.
   shared `self.history`, so off the main thread it must be called via
   `self.after(0, self.add_history, ...)` (both the single and batch paths do).
 - **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT`,
-  `--download URL FORMAT` (mp3/mp4, saves to cwd), and `--remove-bg FILE`
-  (transparent PNG next to the source) run headless; no flags → GUI. All three
-  double as the way to smoke-test the frozen exe.
+  `--download URL FORMAT` (mp3/mp4, saves to cwd), `--remove-bg FILE`
+  (transparent PNG next to the source), and `--upscale FILE [TARGET]`
+  (1080p/2K/4K, default 2K) run headless; no flags → GUI. All four double as the
+  way to smoke-test the frozen exe.
 - **Branding/assets:** `resource_path()` resolves bundled files in dev and in
   the frozen exe (`sys._MEIPASS`). Window + exe icon = `AppLogo.ico`; in-app
   logo (sidebar header + Home banner) = `DashboardLogo.png` loaded via
@@ -263,7 +292,8 @@ bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
   formats.py      format model, helpers, ConversionError
   converters.py   convert_file + all document/image/AV converters
   youtube.py      download_youtube (yt-dlp)
-  background.py   remove_background + BG_MODELS (Marquee)
+  background.py   remove_background + BG_MODELS (Marquee bg remover)
+  upscale.py      upscale_image + TARGETS (Marquee Real-ESRGAN upscaler)
 requirements.txt  runtime deps (pyinstaller is dev-only, installed separately)
 README.md         user-facing docs
 CLAUDE.md         this file
