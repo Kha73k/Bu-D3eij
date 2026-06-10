@@ -2,25 +2,81 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-10 (v3.1.5 dopamine buttons)_
+_Last updated: 2026-06-10 (v3.2 Vanguard multi-tool: OCR + font ID)_
 
-## Status: working app + standalone exe — v3.1.5 (animated CTA redesign)
+## Status: working app + standalone exe — v3.2 (Vanguard Text Extraction + What's The Font)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
-Upscaler**), and a new **Vanguard** AI-content-detection section (**AI Text
-Detector**) are complete and verified. v1.1 = PowerPoint + Markdown; v1.2 = bug
+Upscaler**), and a **Vanguard** AI-text section (**AI Text Detector + Text
+Extraction + What's The Font**) are complete and verified. v1.1 = PowerPoint +
+Markdown; v1.2 = bug
 fixes; v1.3 = YouTube downloads + sun/moon toggle; v1.4 = visual redesign (file-type
 icons, hero Home, table Recent); v1.4.5 = animated "Convert Now" button; v2.0 =
 Marquee / Background Remover (rembg); v2.1 = Marquee Flash/Mid/Omega model selector;
 v2.2 = split the logic into a `bud3eij/` package; v2.3 = Marquee Image Upscaler
 (Real-ESRGAN); v2.3.5 = Marquee filling progress bars; **v3.0 = Vanguard AI Text
-Detector (desklib DeBERTa-v3-large on onnxruntime)**.
+Detector (desklib DeBERTa-v3-large on onnxruntime)**; v3.1 = audit-fix pass;
+v3.1.5 = dopamine CTA redesign; **v3.2 = Vanguard becomes multi-tool (OCR +
+font identification)**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-10 — v3.2: Vanguard multi-tool — Text Extraction (OCR) + What's The Font
+User request: two new image tools, self-contained in Vanguard — extract all text
+from a screenshot/image (with copy-to-clipboard), and identify the font(s) in an
+image of text. **`APP_VERSION = "3.2"`.** Vanguard now uses the same
+`CTkSegmentedButton` switcher pattern as Marquee (`self.vg_tool`:
+"AI Detector" / "Text Extraction" / "What's The Font", panels in `self.vg_panels`,
+`_show_vg_tool`); the detector moved verbatim into `_build_vg_detector`.
+- **Text Extraction (`bud3eij/ocr.py`):** `extract_text(src, model="Fast")` on
+  **RapidOCR** (`rapidocr` pip pkg, Apache-2.0), running on the already-bundled
+  onnxruntime. Panel `_build_vg_ocr` (`vgo_*`): drop zone → **QUALITY**
+  segmented (Fast/Max) → Extract Text GradientButton → eased-fill progress →
+  read-only results textbox + **Copy to clipboard** (pure Tk
+  `clipboard_append`). CLI `--extract-text FILE [TIER]`.
+  Verified: 2-line Inter render OCR'd at 98–99% confidence.
+  **Quality tiers (added same session after user feedback — merged words +
+  skipped lines):** **Fast** = PP-OCRv4 mobile det/cls/rec (~15 MB) bundled
+  inside the wheel (fully offline, also reads Chinese; weakness: the ch rec
+  drops English spaces). **Max** = English rec (`Rec.lang_type=EN`, ~10 MB
+  one-time download into `~/.bud3eij/models/rapidocr/` via
+  `Global.model_root_dir`) + `Det.box_thresh=0.4`/`Det.unclip_ratio=2.0`
+  (recovers lines the default det skips/garbles) + Lanczos ~2× pre-upscale of
+  images < 1600 px (BGR ndarray input). Measured on clean/blurred/dense
+  samples: Max = perfect spacing, all lines, no merging, same ~2 s speed.
+  **PP-OCRv4 server models tested and REJECTED** — ~10× slower and they
+  fragment/skip lines on screenshot-style images.
+- **What's The Font (`bud3eij/fontid.py`):** `identify_font(src, top_k=5)` on
+  `storia/font-classify-onnx` (EfficientNet-B3, MIT, ~3,500 Google Fonts) —
+  64 MB model + config download SHA-256-verified to `~/.bud3eij/models/fontid/`
+  on first use (exact byte-size gate: a truncated 33 MB download initially passed
+  a min-size check and died with INVALID_PROTOBUF). **Preprocessing must mirror
+  upstream exactly:** crop (not resize) to 1024 → letterbox to 320 with a
+  **white** pad → ImageNet normalise; a black pad made everything classify as
+  "Zilla Slab Highlight" at 100%. Results are **closest matches** with a visible
+  disclaimer (Inter → Instrument Sans 86%; Comic Sans → Poor Story 96% — sane
+  lookalikes; commercial fonts can't be named exactly by any offline model).
+  Panel `_build_vg_font` (`vgf_*`): drop zone → bare Identify Font
+  GradientButton (no blurb card — the 5-row results card + disclaimer must fit
+  the default 680px window; verified by screenshot) → 5 result rows with
+  confidence bars. CLI `--identify-font FILE`.
+- **Shared plumbing:** the bg-remover's `_mq_fill_*` eased fill generalised to
+  per-bar `_fill_start/_fill_tick/_fill_stop`; both new tools wired into
+  `_job_started/_finished` and Tools "Unload AI models"
+  (`ocr.unload_models()`/`fontid.unload_models()`); new lucide icons
+  `scan-text.png` + `type.png` (added to `tools/fetch_icons.py` UI list, along
+  with the previously missing `shield-check`). `requirements.txt` + build
+  command gained `rapidocr` / `--collect-all rapidocr` (models live in the
+  wheel; the `rapidocr_onnxruntime` exclude is the legacy name — no conflict).
+- **Verified:** `tests\test_headless.py` 39/39 (new OCR + font-ID checks),
+  `tests\test_gui_smoke.py` 46/46 (switcher, panel swaps, read-only results box,
+  copy button, 7 GradientButtons), CLI smoke of both new flags, and
+  screenshot review of all three panels in dark mode. Exe **not** rebuilt this
+  session (build-command change documented in CLAUDE.md).
 
 ### 2026-06-10 — v3.1.5: "dopamine" CTA redesign — GradientButton v2 on all 5 actions
 User request: a crazier, dopamine-enhancing Convert button, applied to every

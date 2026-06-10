@@ -57,6 +57,8 @@ from bud3eij.vanguard import (  # noqa: F401
     detect_ai_text,
     extract_document_text,
 )
+from bud3eij.ocr import DEFAULT_OCR_TIER, OCR_MODELS, extract_text  # noqa: F401
+from bud3eij.fontid import identify_font  # noqa: F401
 
 
 def resource_path(rel: str) -> str:
@@ -177,7 +179,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "3.1.5"
+APP_VERSION = "3.2"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -911,6 +913,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.marquee_file: Path | None = None
         self.upscale_file: Path | None = None
         self.vanguard_file: Path | None = None
+        self.vg_ocr_file: Path | None = None
+        self.vg_font_file: Path | None = None
         self.batch_export_dir: Path | None = None
         self.history: list[dict] = load_history()
         self.appearance_mode = "Dark"  # toggled by the sun/moon button
@@ -1369,17 +1373,19 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.tools_values["Version"].configure(text=f"Bu D3eij {APP_VERSION}")
 
     def _unload_models(self):
-        """Free the cached AI sessions (rembg, upscaler, detector) to reclaim RAM."""
+        """Free the cached AI sessions (rembg, upscaler, detector, OCR, font ID)."""
         if self._active_jobs > 0:
             self.tools_note.configure(
                 text="Can't unload while a job is running — try again when it finishes.",
                 text_color=WARNING)
             return
-        from bud3eij import background, upscale, vanguard
+        from bud3eij import background, fontid, ocr, upscale, vanguard
 
         background.unload_models()
         upscale.unload_models()
         vanguard.unload_models()
+        ocr.unload_models()
+        fontid.unload_models()
         import gc
 
         gc.collect()
@@ -2400,7 +2406,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.mq_btn.configure(state="disabled")
         self.mq_btn.start_busy()
         self.mq_progress.grid()
-        self._mq_fill_start()
+        self._fill_start(self.mq_progress)
         self.mq_status.configure(
             text=f"Removing background with {tier}… "
                  "(the first use of a model downloads it once)",
@@ -2420,30 +2426,37 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.after(0, self._marquee_done, src, None, exc)
 
     def _marquee_done(self, src: Path, out: Path | None, error: Exception | None):
-        self._mq_fill_stop()
+        self._fill_stop(self.mq_progress)
         self._job_done(status_label=self.mq_status, progress_bar=self.mq_progress,
                        button=self.mq_btn, src=src, out=out, error=error)
 
-    # ---- marquee: eased fill (rembg has no real progress signal) ---------- #
-    def _mq_fill_start(self):
-        """Start a smooth determinate fill that eases toward ~90% (no signal)."""
-        self._mq_fill_value = 0.0
-        self.mq_progress.configure(mode="determinate")
-        self.mq_progress.set(0.0)
-        self._mq_fill_tick()
+    # ---- eased fill (for workers with no real progress signal) ------------ #
+    # Used by the bg remover, Text Extraction and What's The Font; state is
+    # kept per bar so several tools can run at once.
+    def _fill_start(self, bar):
+        """Start a smooth determinate fill on `bar` that eases toward ~90%."""
+        jobs = getattr(self, "_fill_jobs", None)
+        if jobs is None:
+            jobs = self._fill_jobs = {}
+        jobs[bar] = {"value": 0.0, "after": None}
+        bar.configure(mode="determinate")
+        bar.set(0.0)
+        self._fill_tick(bar)
 
-    def _mq_fill_tick(self):
+    def _fill_tick(self, bar):
         # ease toward 0.9: cover a small fraction of the remaining gap each tick,
         # so the bar always keeps creeping while the worker thread runs.
-        self._mq_fill_value = min(0.9, self._mq_fill_value + max(0.004, (0.9 - self._mq_fill_value) * 0.06))
-        self.mq_progress.set(self._mq_fill_value)
-        self._mq_fill_after = self.after(110, self._mq_fill_tick)
+        job = self._fill_jobs.get(bar)
+        if job is None:
+            return
+        job["value"] = min(0.9, job["value"] + max(0.004, (0.9 - job["value"]) * 0.06))
+        bar.set(job["value"])
+        job["after"] = self.after(110, self._fill_tick, bar)
 
-    def _mq_fill_stop(self):
-        after_id = getattr(self, "_mq_fill_after", None)
-        if after_id is not None:
-            self.after_cancel(after_id)
-            self._mq_fill_after = None
+    def _fill_stop(self, bar):
+        job = getattr(self, "_fill_jobs", {}).pop(bar, None)
+        if job and job["after"] is not None:
+            self.after_cancel(job["after"])
 
     # ---- marquee: upscaler actions --------------------------------------- #
     UPSCALE_FITS = {"Pad": "letterbox", "Crop": "crop"}  # label -> upscale_image fit
@@ -2542,20 +2555,56 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                        button=self.up_btn, src=src, out=out, error=error)
 
     # ===================================================================== #
-    # Vanguard — AI Text Detector
+    # Vanguard — AI text tools (detector / text extraction / font ID)
     # ===================================================================== #
     def _build_vanguard(self, parent) -> ctk.CTkFrame:
         frame = ctk.CTkFrame(parent)
         frame.grid_columnconfigure(0, weight=1)
-        frame.grid_rowconfigure(4, weight=1)  # results row grows
+        frame.grid_rowconfigure(2, weight=1)
         self._section_header(
             frame, "Vanguard",
-            "AI content detection — estimate how likely text is AI-generated.",
+            "AI text tools — detect AI writing, pull text out of images, identify fonts.",
         )
 
+        # ---- tool switcher (same pattern as Marquee) ----
+        switch = ctk.CTkFrame(frame, fg_color="transparent")
+        switch.grid(row=1, column=0, sticky="w", padx=24, pady=(2, 6))
+        self.vg_tool = ctk.CTkSegmentedButton(
+            switch, values=["AI Detector", "Text Extraction", "What's The Font"],
+            command=self._show_vg_tool,
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.vg_tool.set("AI Detector")
+        self.vg_tool.grid(row=0, column=0)
+
+        # ---- tool panels (only one shown at a time) ----
+        container = ctk.CTkFrame(frame, fg_color="transparent")
+        container.grid(row=2, column=0, sticky="nsew")
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_rowconfigure(0, weight=1)
+        self.vg_panels = {
+            "AI Detector": self._build_vg_detector(container),
+            "Text Extraction": self._build_vg_ocr(container),
+            "What's The Font": self._build_vg_font(container),
+        }
+        for p in self.vg_panels.values():
+            p.grid(row=0, column=0, sticky="nsew")
+        self._show_vg_tool("AI Detector")
+        return frame
+
+    def _show_vg_tool(self, name: str):
+        for n, panel in self.vg_panels.items():
+            (panel.grid if n == name else panel.grid_remove)()
+
+    # ---- vanguard: AI detector panel -------------------------------------- #
+    def _build_vg_detector(self, parent) -> ctk.CTkFrame:
+        panel = ctk.CTkFrame(parent, fg_color="transparent")
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(3, weight=1)  # results row grows
+
         # ---- input card: paste text or upload a document ----
-        incard = ctk.CTkFrame(frame, fg_color=CARD_SOFT, corner_radius=12)
-        incard.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 10))
+        incard = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        incard.grid(row=0, column=0, sticky="ew", padx=24, pady=(4, 10))
         incard.grid_columnconfigure(0, weight=1)
 
         top = ctk.CTkFrame(incard, fg_color="transparent")
@@ -2592,8 +2641,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                                       text_color=MUTED, anchor="w", justify="left", wraplength=620)
         self.vg_source.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 14))
 
-        btnrow = ctk.CTkFrame(frame, fg_color="transparent")
-        btnrow.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 8))
+        btnrow = ctk.CTkFrame(panel, fg_color="transparent")
+        btnrow.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 8))
         btnrow.grid_columnconfigure(0, weight=1)
         self.vg_btn = GradientButton(
             btnrow, text="Detect AI Text", height=46, icon="shield-check",
@@ -2609,14 +2658,14 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.vg_reset_btn.grid(row=0, column=1, padx=(10, 0))
 
-        self.vg_progress = ctk.CTkProgressBar(frame, height=8)
+        self.vg_progress = ctk.CTkProgressBar(panel, height=8)
         self.vg_progress.set(0)
-        self.vg_progress.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.vg_progress.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 4))
         self.vg_progress.grid_remove()  # only while analysing
 
         # ---- results card (hidden until a run finishes) ----
-        self.vg_results = ctk.CTkFrame(frame, fg_color=CARD_SOFT, corner_radius=12)
-        self.vg_results.grid(row=4, column=0, sticky="nsew", padx=24, pady=(0, 8))
+        self.vg_results = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        self.vg_results.grid(row=3, column=0, sticky="nsew", padx=24, pady=(0, 8))
         self.vg_results.grid_columnconfigure(0, weight=1)
         self.vg_results.grid_rowconfigure(2, weight=1)
 
@@ -2657,11 +2706,161 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vg_results.grid_remove()
 
         self.vg_status = ctk.CTkLabel(
-            frame, text="Paste or upload text, then Detect.", text_color=MUTED,
+            panel, text="Paste or upload text, then Detect.", text_color=MUTED,
             wraplength=620, justify="left", anchor="w",
         )
-        self.vg_status.grid(row=5, column=0, sticky="w", padx=24, pady=(2, 14))
-        return frame
+        self.vg_status.grid(row=4, column=0, sticky="w", padx=24, pady=(2, 14))
+        return panel
+
+    # ---- vanguard: text extraction (OCR) panel ----------------------------- #
+    def _build_vg_ocr(self, parent) -> ctk.CTkFrame:
+        panel = ctk.CTkFrame(parent, fg_color="transparent")
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(3, weight=1)  # results row grows
+
+        self.vgo_drop_icon = self._ui_icon("scan-text", 46, light=RED, dark=RED_BRIGHT)
+        dz = self._build_drop_zone(
+            panel, row=0, icon=self.vgo_drop_icon,
+            title="Drag & drop a screenshot or photo here",
+            hint="or click to browse  ·  JPG · PNG · WEBP · BMP · GIF · TIFF",
+            on_drop=self.on_vg_ocr_drop, on_click=self.browse_vg_ocr, height=130,
+        )
+        self.vgo_drop = dz["zone"]
+        self.vgo_icon_label = dz["icon"]
+        self.vgo_primary = dz["primary"]
+        self.vgo_secondary = dz["secondary"]
+
+        card = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        card.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 10))
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card, text="Reads every line of text out of the image — fully offline OCR.",
+            text_color=MUTED, anchor="w", justify="left", wraplength=620,
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(12, 4))
+
+        qual = ctk.CTkFrame(card, fg_color="transparent")
+        qual.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 2))
+        ctk.CTkLabel(qual, text="QUALITY", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, padx=(0, 12))
+        self.vgo_model = ctk.CTkSegmentedButton(
+            qual, values=list(OCR_MODELS), command=self._on_vgo_model_change,
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.vgo_model.set(DEFAULT_OCR_TIER)
+        self.vgo_model.grid(row=0, column=1)
+        self.vgo_model_caption = ctk.CTkLabel(
+            card, text=OCR_MODELS[DEFAULT_OCR_TIER][1], text_color=MUTED,
+            anchor="w", justify="left", wraplength=620,
+        )
+        self.vgo_model_caption.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 6))
+
+        self.vgo_btn = GradientButton(
+            card, text="Extract Text", height=46, icon="scan-text",
+            busy_text="Extracting", command=self.on_vg_ocr_run, state="disabled",
+        )
+        self.vgo_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
+
+        self.vgo_progress = ctk.CTkProgressBar(panel, height=8)
+        self.vgo_progress.set(0)
+        self.vgo_progress.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.vgo_progress.grid_remove()  # only while extracting
+
+        # ---- results card (hidden until a run finishes) ----
+        self.vgo_results = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        self.vgo_results.grid(row=3, column=0, sticky="nsew", padx=24, pady=(0, 8))
+        self.vgo_results.grid_columnconfigure(0, weight=1)
+        self.vgo_results.grid_rowconfigure(1, weight=1)
+        head = ctk.CTkFrame(self.vgo_results, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 4))
+        head.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(head, text="Extracted text", font=self._font(14, "semibold"),
+                     anchor="w").grid(row=0, column=0, sticky="w")
+        self.vgo_copy_btn = ctk.CTkButton(
+            head, text="Copy to clipboard", width=150, height=32,
+            command=self._vg_ocr_copy,
+        )
+        self.vgo_copy_btn.grid(row=0, column=1, sticky="e")
+        self.vgo_out = ctk.CTkTextbox(self.vgo_results, height=180, wrap="word")
+        self.vgo_out.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 14))
+        self.vgo_out.configure(state="disabled")
+        self.vgo_results.grid_remove()
+
+        self.vgo_status = ctk.CTkLabel(
+            panel, text="Drop an image to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.vgo_status.grid(row=4, column=0, sticky="w", padx=24, pady=(2, 10))
+        return panel
+
+    # ---- vanguard: what's-the-font panel ----------------------------------- #
+    def _build_vg_font(self, parent) -> ctk.CTkFrame:
+        panel = ctk.CTkFrame(parent, fg_color="transparent")
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(3, weight=1)  # results row grows
+
+        self.vgf_drop_icon = self._ui_icon("type", 46, light=RED, dark=RED_BRIGHT)
+        dz = self._build_drop_zone(
+            panel, row=0, icon=self.vgf_drop_icon,
+            title="Drag & drop an image of some text here",
+            hint="or click to browse  ·  a tight crop of large, clear text works best",
+            on_drop=self.on_vg_font_drop, on_click=self.browse_vg_font, height=120,
+        )
+        self.vgf_drop = dz["zone"]
+        self.vgf_icon_label = dz["icon"]
+        self.vgf_primary = dz["primary"]
+        self.vgf_secondary = dz["secondary"]
+
+        # bare button row (like the detector) — the results card needs the room
+        self.vgf_btn = GradientButton(
+            panel, text="Identify Font", height=46, icon="type",
+            busy_text="Identifying", command=self.on_vg_font_run, state="disabled",
+        )
+        self.vgf_btn.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 10))
+
+        self.vgf_progress = ctk.CTkProgressBar(panel, height=8)
+        self.vgf_progress.set(0)
+        self.vgf_progress.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.vgf_progress.grid_remove()  # only while identifying
+
+        # ---- results card: 5 fixed match rows (hidden until a run finishes) ----
+        self.vgf_results = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        self.vgf_results.grid(row=3, column=0, sticky="new", padx=24, pady=(0, 8))
+        self.vgf_results.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(self.vgf_results, text="Closest font matches",
+                     font=self._font(14, "semibold"), anchor="w",
+                     ).grid(row=0, column=0, sticky="ew", padx=18, pady=(8, 2))
+        self.vgf_rows = []
+        for i in range(5):
+            row = ctk.CTkFrame(self.vgf_results, fg_color="transparent")
+            row.grid(row=1 + i, column=0, sticky="ew", padx=18, pady=1)
+            row.grid_columnconfigure(1, weight=1)
+            ctk.CTkLabel(row, text=f"{i + 1}.", width=22, text_color=MUTED,
+                         anchor="w").grid(row=0, column=0)
+            name = ctk.CTkLabel(row, text="", font=self._font(14, "semibold"),
+                                anchor="w", justify="left", wraplength=380)
+            name.grid(row=0, column=1, sticky="w")
+            bar = ctk.CTkProgressBar(row, width=140, height=8, progress_color=RED)
+            bar.set(0)
+            bar.grid(row=0, column=2, padx=(12, 8))
+            pct = ctk.CTkLabel(row, text="", width=48, text_color=MUTED, anchor="e")
+            pct.grid(row=0, column=3)
+            self.vgf_rows.append({"frame": row, "name": name, "bar": bar, "pct": pct})
+        self.vgf_disclaimer = ctk.CTkLabel(
+            self.vgf_results,
+            text="⚠ Closest matches, not an exact ID — commercial fonts appear as "
+                 "their nearest Google Font lookalike.",
+            text_color=MUTED, anchor="w", justify="left", wraplength=620,
+            font=ctk.CTkFont(size=11),
+        )
+        self.vgf_disclaimer.grid(row=6, column=0, sticky="ew", padx=18, pady=(4, 8))
+        self.vgf_results.grid_remove()
+
+        self.vgf_status = ctk.CTkLabel(
+            panel, text="Drop an image of text to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.vgf_status.grid(row=4, column=0, sticky="w", padx=24, pady=(2, 10))
+        return panel
 
     @staticmethod
     def _vg_tier_text(tier: str):
@@ -2857,9 +3056,175 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                  f"passages flagged · {result['model']}.{caveat}",
             text_color=color)
 
+    # ---- vanguard: text extraction actions --------------------------------- #
+    def _on_vgo_model_change(self, tier: str):
+        self.vgo_model_caption.configure(text=OCR_MODELS.get(tier, ("", ""))[1])
+
+    def on_vg_ocr_drop(self, event):
+        paths = self._parse_drop(event)
+        if paths:
+            self.set_vg_ocr_file(paths[0])
+
+    def browse_vg_ocr(self):
+        path = self._ask_open("vg_ocr", title="Select an image to extract text from",
+                              filetypes=self._IMAGE_FILETYPES)
+        if path:
+            self.set_vg_ocr_file(Path(path))
+
+    def set_vg_ocr_file(self, path: Path):
+        if not path.is_file():
+            self.vgo_status.configure(text=self._not_a_file_message(path),
+                                      text_color=WARNING)
+            return
+        self.vg_ocr_file = self._set_image_file(
+            path, icon_label=self.vgo_icon_label, default_icon=self.vgo_drop_icon,
+            primary=self.vgo_primary, secondary=self.vgo_secondary,
+            button=self.vgo_btn, status=self.vgo_status,
+            detail="Image",
+            ready_text=f"Ready to extract the text from {path.name}",
+        )
+
+    def on_vg_ocr_run(self):
+        src = self.vg_ocr_file
+        if not src:
+            return
+        tier = self.vgo_model.get() or DEFAULT_OCR_TIER
+        self._job_started()
+        self.vgo_btn.configure(state="disabled")
+        self.vgo_btn.start_busy()
+        self.vgo_progress.grid()
+        self._fill_start(self.vgo_progress)
+        note = (" (the first Max run downloads a small model once)"
+                if tier == "Max" else
+                " (the first run after launch loads the OCR models and is slower)")
+        self.vgo_status.configure(
+            text=f"Reading the image with {tier}…{note}", text_color=MUTED)
+        threading.Thread(target=self._vg_ocr_worker, args=(src, tier),
+                         daemon=True).start()
+
+    def _vg_ocr_worker(self, src: Path, tier: str):
+        try:
+            result = extract_text(src, model=tier)
+            self.after(0, self._vg_ocr_done, src, result, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._vg_ocr_done, src, None, exc)
+
+    def _vg_ocr_done(self, src: Path, result: dict | None, error: Exception | None):
+        self._fill_stop(self.vgo_progress)
+        self._job_finished()
+        self.vgo_progress.grid_remove()
+        self.vgo_progress.set(0)
+        self.vgo_btn.configure(state="normal")
+        self.vgo_btn.stop_busy(success=error is None and bool(result and result["count"]))
+        if error:
+            self.vgo_status.configure(text=f"✕  {error}", text_color=ERROR)
+            return
+        if not result["count"]:
+            self.vgo_results.grid_remove()
+            self.vgo_status.configure(
+                text=f"No text found in {src.name} — try a sharper or closer image.",
+                text_color=WARNING)
+            return
+        self.vgo_out.configure(state="normal")
+        self.vgo_out.delete("1.0", "end")
+        self.vgo_out.insert("1.0", result["text"])
+        self.vgo_out.configure(state="disabled")
+        self.vgo_results.grid()
+        chars = len(result["text"])
+        self.vgo_status.configure(
+            text=f"✓  Extracted {result['count']} line(s) · {chars:,} characters "
+                 f"from {src.name}.",
+            text_color=SUCCESS)
+
+    def _vg_ocr_copy(self):
+        text = self.vgo_out.get("1.0", "end").rstrip("\n")
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.vgo_status.configure(text=f"✓  Copied {len(text):,} characters to the "
+                                       "clipboard.", text_color=SUCCESS)
+
+    # ---- vanguard: what's-the-font actions --------------------------------- #
+    def on_vg_font_drop(self, event):
+        paths = self._parse_drop(event)
+        if paths:
+            self.set_vg_font_file(paths[0])
+
+    def browse_vg_font(self):
+        path = self._ask_open("vg_font", title="Select an image of text",
+                              filetypes=self._IMAGE_FILETYPES)
+        if path:
+            self.set_vg_font_file(Path(path))
+
+    def set_vg_font_file(self, path: Path):
+        if not path.is_file():
+            self.vgf_status.configure(text=self._not_a_file_message(path),
+                                      text_color=WARNING)
+            return
+        self.vg_font_file = self._set_image_file(
+            path, icon_label=self.vgf_icon_label, default_icon=self.vgf_drop_icon,
+            primary=self.vgf_primary, secondary=self.vgf_secondary,
+            button=self.vgf_btn, status=self.vgf_status,
+            detail="Image",
+            ready_text=f"Ready to identify the font in {path.name}",
+        )
+
+    def on_vg_font_run(self):
+        src = self.vg_font_file
+        if not src:
+            return
+        self._job_started()
+        self.vgf_btn.configure(state="disabled")
+        self.vgf_btn.start_busy()
+        self.vgf_progress.grid()
+        self._fill_start(self.vgf_progress)
+        self.vgf_status.configure(
+            text="Matching the lettering… (the first ever run downloads the "
+                 "~64 MB font model once).",
+            text_color=MUTED)
+        threading.Thread(target=self._vg_font_worker, args=(src,), daemon=True).start()
+
+    def _vg_font_worker(self, src: Path):
+        try:
+            result = identify_font(src, top_k=5)
+            self.after(0, self._vg_font_done, src, result, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._vg_font_done, src, None, exc)
+
+    def _vg_font_done(self, src: Path, result: dict | None, error: Exception | None):
+        self._fill_stop(self.vgf_progress)
+        self._job_finished()
+        self.vgf_progress.grid_remove()
+        self.vgf_progress.set(0)
+        self.vgf_btn.configure(state="normal")
+        self.vgf_btn.stop_busy(success=error is None)
+        if error:
+            self.vgf_status.configure(text=f"✕  {error}", text_color=ERROR)
+            return
+        matches = result["matches"]
+        for i, slot in enumerate(self.vgf_rows):
+            if i < len(matches):
+                m = matches[i]
+                slot["name"].configure(text=m["name"])
+                slot["bar"].set(m["prob"])
+                slot["pct"].configure(text=f"{m['prob']:.0%}")
+                slot["frame"].grid()
+            else:
+                slot["frame"].grid_remove()
+        self.vgf_results.grid()
+        best = matches[0]
+        self.vgf_status.configure(
+            text=f"✓  Best match: {best['name']} ({best['prob']:.0%}) — "
+                 f"closest of ~3,500 Google Fonts for {src.name}.",
+            text_color=SUCCESS)
+
 
 def _run_cli(args) -> int:
-    """Headless mode: --convert, --download, --remove-bg, --upscale, or --detect. Returns exit code."""
+    """Headless mode: --convert, --download, --remove-bg, --upscale, --detect,
+    --extract-text, or --identify-font. Returns exit code."""
     import argparse
 
     parser = argparse.ArgumentParser(prog=APP_NAME, description="Bu D3eij file converter")
@@ -2883,6 +3248,15 @@ def _run_cli(args) -> int:
     parser.add_argument(
         "--detect", metavar="FILE",
         help="Estimate the AI-likelihood of a .txt/.docx/.pdf and exit.",
+    )
+    parser.add_argument(
+        "--extract-text", nargs="+", metavar="FILE [TIER]",
+        help="OCR all text out of an image (TIER: Fast/Max, default Fast), "
+             "print it, and exit.",
+    )
+    parser.add_argument(
+        "--identify-font", metavar="FILE",
+        help="Identify the font in an image (top-5 Google Font matches) and exit.",
     )
     ns = parser.parse_args(args)
     if ns.convert:
@@ -2934,6 +3308,30 @@ def _run_cli(args) -> int:
             r = detect_ai_text(ns.detect, is_file=True)
             short = "  (short text — low confidence)" if r["too_short"] else ""
             print(f"{r['score']}% AI-likelihood · {r['tier']} · {r['model']}{short}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.extract_text:
+        if len(ns.extract_text) > 2:
+            parser.error("--extract-text takes FILE and an optional TIER (Fast/Max)")
+        src = ns.extract_text[0]
+        tier = ns.extract_text[1].title() if len(ns.extract_text) > 1 else DEFAULT_OCR_TIER
+        if tier not in OCR_MODELS:
+            parser.error(f"unknown tier '{tier}' — use one of: {', '.join(OCR_MODELS)}")
+        try:
+            r = extract_text(src, model=tier)
+            print(r["text"] if r["count"] else "(no text found)")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.identify_font:
+        try:
+            r = identify_font(ns.identify_font, top_k=5)
+            for m in r["matches"]:
+                print(f"{m['prob']:6.1%}  {m['name']}")
+            print(f"(closest matches · {r['model']})")
             return 0
         except Exception as exc:  # noqa: BLE001
             print(f"Error: {exc}", file=sys.stderr)

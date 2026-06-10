@@ -13,6 +13,12 @@ saved right next to the original.
 - Auto-detects the input format and only offers compatible output formats
 - Single-file **Converter** and a multi-file **Batch Convert** view
 - **YouTube** tab: paste a link and download it as MP4 (video) or MP3 (audio)
+- **Marquee** tab (image editing): **Background Remover** (transparent PNG, three
+  quality tiers) and **Image Upscaler** (Real-ESRGAN to exact 1080p / 2K / 4K)
+- **Vanguard** tab (AI text tools): **AI Text Detector** (estimate how likely a
+  text is AI-generated, with flagged passages), **Text Extraction** (offline OCR
+  of any screenshot/photo, with copy-to-clipboard), and **What's The Font**
+  (closest Google-Font matches for the lettering in an image)
 - **Recent** tab: persistent history of your conversions with one-click *Open* / *Folder*
 - Progress indicator with clear success / error messages
 - Logo-derived red theme with a sun/moon toggle to switch Light / Dark
@@ -89,6 +95,11 @@ Convert a single file, or download a video, without opening the window:
 ```powershell
 python app.py --convert "C:\path\to\photo.png" jpg
 python app.py --download "https://www.youtube.com/watch?v=…" mp3   # saves to the current folder
+python app.py --remove-bg "C:\path\photo.png"        # transparent PNG next to the source
+python app.py --upscale "C:\path\small.png" 2K       # 1080p / 2K / 4K
+python app.py --detect "C:\path\essay.docx"          # AI-likelihood estimate
+python app.py --extract-text "C:\path\shot.png" Max  # OCR (Fast/Max): prints the text
+python app.py --identify-font "C:\path\text.png"     # top-5 Google Font matches
 ```
 
 ## Standalone .exe (no Python needed)
@@ -112,7 +123,9 @@ pyinstaller --noconfirm --windowed --name "Bu D3eij" `
   --collect-data docx --collect-data pdf2docx --collect-data reportlab `
   --collect-submodules pymupdf4llm --hidden-import tabulate `
   --collect-all yt_dlp `
-  --exclude-module pymupdf.layout --exclude-module onnxruntime --exclude-module rapidocr_onnxruntime `
+  --collect-all rembg --collect-all onnxruntime --copy-metadata pymatting --copy-metadata rembg `
+  --collect-all tokenizers --collect-all rapidocr `
+  --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
 
@@ -155,9 +168,22 @@ The **Recent** tab lists past conversions (stored in
 - Image conversions to formats without transparency (JPG, BMP) flatten any
   alpha channel to RGB. Animated GIFs keep their animation when converting to
   WEBP/TIFF/PNG; converting to a still format uses the first frame.
+- **AI detection is an estimate, not proof** — detectors can mislabel edited,
+  translated, or non-native-English human writing. Never treat the score as an
+  accusation.
+- **Font identification is a closest-match estimate** against ~3,500 Google
+  Fonts — commercial fonts are shown as their nearest Google lookalike. A tight
+  crop of large, clear text gives the best results. The ~64 MB font model
+  downloads once on first use. **Text Extraction** (OCR) works fully offline
+  out of the box; its **Fast** tier also reads Chinese, while **Max** is tuned
+  for English (proper word spacing, catches faint/small lines) and fetches a
+  small model once on first use. Nothing uses an online API — no accounts,
+  no charges, no usage limits.
 
 ## Tech stack
 
 Python 3.11 · customtkinter · tkinterdnd2 · Pillow · python-docx ·
 pdfplumber · reportlab · pdf2docx · python-pptx ·
-pymupdf4llm · mammoth · markdownify · yt-dlp · ffmpeg-python
+pymupdf4llm · mammoth · markdownify · yt-dlp · ffmpeg-python ·
+rembg · onnxruntime (Real-ESRGAN, DeBERTa detector, font classifier) ·
+rapidocr · tokenizers

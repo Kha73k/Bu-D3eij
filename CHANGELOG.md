@@ -5,6 +5,38 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v3.2 — 2026-06-10
+
+Vanguard grows into a multi-tool page: two new image tools join the AI detector.
+
+### Added
+- **Text Extraction** — drop or pick a screenshot/photo and every line of text
+  is read out of it (offline OCR, nothing leaves your machine). Results appear
+  in a textbox with a **Copy to clipboard** button, plus a line/character count.
+  Two **QUALITY** tiers: **Fast** (instant, fully offline, also reads Chinese)
+  and **Max** (best for English — proper word spacing and catches faint/small
+  lines the Fast tier can miss; a small model downloads once on first use).
+  No accounts, no APIs, no usage limits — everything runs on your machine.
+  Also headless: `--extract-text FILE [Fast|Max]`.
+- **What's The Font** — drop an image of some text and get the five **closest
+  matches from ~3,500 Google Fonts**, each with a confidence bar. A tight crop
+  of large, clear text works best. The ~64 MB font model downloads once on
+  first use (integrity-checked), then it's fully offline.
+  Also headless: `--identify-font FILE`.
+- Vanguard now has a tool switcher (AI Detector / Text Extraction /
+  What's The Font), just like Marquee; both new action buttons get the full
+  animated treatment, and **Tools → Unload AI models** frees the new engines too.
+
+### Notes
+- Font identification is a **closest-match estimate**, not an exact ID —
+  commercial fonts (Helvetica, Proxima Nova, …) are shown as their nearest
+  Google Font lookalike; the panel says so.
+- OCR's Fast tier ships inside the app (no downloads) and reads English and
+  Chinese; the Max tier is tuned for English and is just as quick after its
+  one-time small download.
+
+---
+
 ## v3.1.5 — 2026-06-10
 
 The action buttons go full dopamine.

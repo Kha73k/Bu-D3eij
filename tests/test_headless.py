@@ -156,14 +156,72 @@ check("tier present", bool(res["tier"]))
 check("spans present", len(res["spans"]) > 0)
 print(f"       -> {res['score']}% · {res['tier']} · {len(res['spans'])} spans")
 
+# ---- 7b. vanguard: text extraction (OCR) ------------------------------------
+print("\n[7b] text extraction (RapidOCR)")
+from bud3eij.ocr import extract_text  # noqa: E402
+from PIL import ImageDraw, ImageFont  # noqa: E402
+
+inter = Path(__file__).resolve().parent.parent / "assets/fonts/Inter-SemiBold.ttf"
+ocr_img = Image.new("RGB", (640, 200), "white")
+d = ImageDraw.Draw(ocr_img)
+ttf = ImageFont.truetype(str(inter), 40)
+d.text((30, 40), "Hello Bu D3eij", fill="black", font=ttf)
+d.text((30, 110), "OCR test 12345", fill="black", font=ttf)
+ocr_src = tmp / "ocr_sample.png"
+ocr_img.save(ocr_src)
+ocr_res = extract_text(ocr_src)
+check("ocr finds both lines", ocr_res["count"] == 2, str(ocr_res["lines"]))
+check("ocr text content", "Hello" in ocr_res["text"] and "12345" in ocr_res["text"],
+      repr(ocr_res["text"]))
+check("ocr confidences sane",
+      all(0 < c <= 1 for _, c in ocr_res["lines"]), str(ocr_res["lines"]))
+# Max tier: English rec + tuned det + pre-upscale -> proper word spacing
+max_res = extract_text(ocr_src, model="Max")
+check("ocr Max finds both lines", max_res["count"] == 2, str(max_res["lines"]))
+check("ocr Max keeps spaces", "OCR test 12345" in max_res["text"],
+      repr(max_res["text"]))
+try:
+    extract_text(ocr_src, model="Ultra")
+    check("ocr rejects bad tier", False)
+except ConversionError:
+    check("ocr rejects bad tier", True)
+try:
+    extract_text(tmp / "note.txt")
+    check("ocr rejects non-image", False)
+except ConversionError:
+    check("ocr rejects non-image", True)
+
+# ---- 7c. vanguard: font identification ---------------------------------------
+print("\n[7c] font identification (downloads the ~64 MB model on first ever run)")
+from bud3eij.fontid import identify_font  # noqa: E402
+
+font_res = identify_font(ocr_src, top_k=5)
+probs = [m["prob"] for m in font_res["matches"]]
+check("font returns 5 matches", len(font_res["matches"]) == 5, str(len(probs)))
+check("font probs descending 0-1",
+      probs == sorted(probs, reverse=True) and all(0 < p <= 1 for p in probs),
+      str(probs))
+check("font names non-empty", all(m["name"] for m in font_res["matches"]))
+print("       -> " + ", ".join(f"{m['name']} {m['prob']:.0%}"
+                               for m in font_res["matches"][:3]))
+try:
+    identify_font(tmp / "note.txt")
+    check("font rejects non-image", False)
+except ConversionError:
+    check("font rejects non-image", True)
+
 # ---- 8. unload functions -----------------------------------------------------
 print("\n[8] unload functions")
-from bud3eij import background, upscale, vanguard  # noqa: E402
+from bud3eij import background, fontid, ocr, upscale, vanguard  # noqa: E402
 
 background.unload_models()
 upscale.unload_models()
 vanguard.unload_models()
+ocr.unload_models()
+fontid.unload_models()
 check("unload functions run", True)
+check("ocr engines cleared", not ocr._ENGINES)
+check("fontid session cleared", fontid._SESSION is None and fontid._CONFIG is None)
 
 # ---- 9. youtube validation paths ---------------------------------------------
 print("\n[9] youtube validation (no network)")

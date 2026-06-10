@@ -17,6 +17,9 @@ reorganized for safe growth before the image-editing section expands.)
 its first tool is a **Background Remover** (rembg) that exports a transparent PNG.
 **v3.1** was a full audit-fix pass (no new direction): COM safety, thread-race
 fixes, shared panel helpers, and an in-repo `tests/` suite — details inline below.
+**v3.2** turns **Vanguard into a multi-tool page** (same switcher pattern as
+Marquee): AI Detector + two new image tools — **Text Extraction** (RapidOCR) and
+**What's The Font** (Storia font-classify) — details inline below.
 
 ## Environment (important)
 - **Runtime is the Python 3.11 venv at `.venv`** — always use it:
@@ -46,6 +49,10 @@ fixes, shared panel helpers, and an in-repo `tests/` suite — details inline be
 # Headless background removal -> transparent PNG (also works on the exe)
 .\.venv\Scripts\python app.py --remove-bg "C:\path\photo.png"
 
+# Headless OCR / font identification (also work on the exe)
+.\.venv\Scripts\python app.py --extract-text "C:\path\screenshot.png"
+.\.venv\Scripts\python app.py --identify-font "C:\path\text.png"
+
 # Install / update deps
 .\.venv\Scripts\python -m pip install -r requirements.txt
 
@@ -61,10 +68,20 @@ fixes, shared panel helpers, and an in-repo `tests/` suite — details inline be
   --collect-submodules pymupdf4llm --hidden-import tabulate `
   --collect-all yt_dlp `
   --collect-all rembg --collect-all onnxruntime --copy-metadata pymatting --copy-metadata rembg `
-  --collect-all tokenizers `
+  --collect-all tokenizers --collect-all rapidocr `
   --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
+
+> **v3.2 Vanguard tools (OCR + font ID) build note — already applied above:**
+> `--collect-all rapidocr` was added: Text Extraction uses the **`rapidocr`** pip
+> package whose PP-OCRv4 mobile models (det+cls+rec, ~15 MB) and config YAMLs ship
+> **inside the wheel** — collect-all bundles them, so OCR is fully offline in the
+> exe. This does NOT conflict with `--exclude-module rapidocr_onnxruntime` (that's
+> the *legacy* package name, kept excluded for the pymupdf.layout trap). What's The
+> Font's model (`storia/font-classify-onnx`, ~64 MB + config) is **not bundled** —
+> it downloads SHA-256-verified into `~/.bud3eij/models/fontid/` on first use
+> (`fontid._ensure_file`), like the upscaler/Vanguard models.
 
 > **v3.0 Vanguard (AI text detector) build note — already applied above:**
 > `--collect-all tokenizers` was added: the detector tokenizes with the HF
@@ -98,9 +115,11 @@ fixes, shared panel helpers, and an in-repo `tests/` suite — details inline be
   each prints OK/FAIL lines and exits non-zero on failure. Run with the venv
   python: `tests\test_headless.py` (format model, conversions incl. animated
   GIF, ffmpeg error truncation, upscaler fits/overwrite/SR-threshold,
-  bg-remover overwrite, vanguard scoring, history validation — loads the
-  Vanguard model, so the first run is slow), `tests\test_gui_smoke.py` (all
-  frames + the v3.1 widgets/counters), `tests\test_com_paths.py` (direct-Word
+  bg-remover overwrite, vanguard scoring, OCR text extraction, font ID,
+  history validation — loads the Vanguard model, so the first run is slow),
+  `tests\test_gui_smoke.py` (all
+  frames + the v3.1 widgets/counters + the v3.2 Vanguard switcher/panels),
+  `tests\test_com_paths.py` (direct-Word
   DOCX→PDF incl. the no-WINWORD-leak check, owned-PowerPoint PPTX→PDF; needs
   Office installed).
 - **Conversions (headless, ad-hoc):** `import app`, generate samples (PIL image,
@@ -193,8 +212,9 @@ still apply; only the file a function lives in changed.
   asks the output path per-run via `asksaveasfilename` (defaults `<stem>_no-bg.png`),
   shows a **filling (determinate) progress bar** while the worker thread runs, and
   records the result via `add_history`. Because rembg's `remove()` has no progress
-  callback, the bar is an **eased simulated fill** (`_mq_fill_start`/`_mq_fill_tick`/
-  `_mq_fill_stop`): a timer creeps the bar toward ~90% while the worker runs and snaps
+  callback, the bar is an **eased simulated fill** (`_fill_start(bar)`/`_fill_tick`/
+  `_fill_stop(bar)` — generalised per-bar in v3.2, also used by the Vanguard OCR and
+  font panels): a timer creeps the bar toward ~90% while the worker runs and snaps
   it to 100% on success — a filling bar, not the old back-and-forth one. Nav icon
   reuses the bundled `assets/ui/sparkles.png`. v3.1: `remove_background` gained
   `overwrite` (see Dispatch bullet) and `unload_models()` (clears
@@ -233,6 +253,14 @@ still apply; only the file a function lives in changed.
   Pad/Crop via `App.UPSCALE_FITS`). SR is **skipped below `_SR_MIN_GAIN`
   (1.25×)** — a full ×4 pass then a Lanczos *down*scale costs minutes + ~GB RAM
   for a near-identical result. Also gained `overwrite` + `unload_models()`.
+- **Vanguard = a multi-tool AI-text page (tool switcher added v3.2).** Same
+  pattern as Marquee: `_build_vanguard` is `_section_header` + a
+  `CTkSegmentedButton` (`self.vg_tool`: "AI Detector" / "Text Extraction" /
+  "What's The Font") + a container of self-contained panels in `self.vg_panels`,
+  swapped by `_show_vg_tool` (grid/grid_remove). The detector lives in
+  `_build_vg_detector` (attrs `vg_*`), Text Extraction in `_build_vg_ocr`
+  (attrs `vgo_*`), What's The Font in `_build_vg_font` (attrs `vgf_*`). Add the
+  next text tool as a fourth value + `_build_vg_<tool>` panel.
 - **Vanguard → AI Text Detector (v3.0):** `detect_ai_text(source, is_file=False,
   progress=None)` in `bud3eij/vanguard.py` (lazy import) estimates how likely text is
   AI-generated using **`desklib/ai-text-detector-v1.01`** (a DeBERTa-v3-large fine-tune,
@@ -261,7 +289,8 @@ still apply; only the file a function lives in changed.
   `vanguard_model/` → the cache; raises a clear error if absent). **Caveat (by design):**
   desklib catches AI text near-100% but over-flags some clean/simple/non-native *human*
   writing as AI — inherent to all detectors; the UI shows an estimate + disclaimer, never an
-  accusation. GUI panel `_build_vanguard` (paste `CTkTextbox` + Upload/
+  accusation. GUI panel `_build_vg_detector` (was `_build_vanguard` before the
+  v3.2 switcher; paste `CTkTextbox` + Upload/
   drag-drop, **Detect AI Text** button, determinate progress + live %, results card with big
   score %, tier chip, a read-only textbox that **highlights flagged passages** via tk
   `Text` tags, a **Reset** button (`reset_vanguard`, beside Detect — clears input/
@@ -282,7 +311,62 @@ still apply; only the file a function lives in changed.
   `self.vg_out_text`; `unload_models()` frees the ~2 GB session (Tools button).
   **Detection is an estimate, NOT proof**
   — the UI says so; never phrase results as an accusation.
-- **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube,
+- **Vanguard → Text Extraction (v3.2):** `extract_text(src, model="Fast")` in
+  `bud3eij/ocr.py` (lazy import) OCRs every text line out of an image with
+  **RapidOCR** (`rapidocr` pip package, Apache-2.0) on the already-bundled
+  **onnxruntime**. **QUALITY tiers** in `OCR_MODELS` (`DEFAULT_OCR_TIER =
+  "Fast"`), engines cached per tier in `_ENGINES` + `unload_models()`:
+  - **Fast** = PP-OCRv4 mobile det/cls/rec (~15 MB) shipped **inside the wheel**
+    (no downloads, fully offline; the ch models also read Chinese). Weakness:
+    the ch recognizer **drops spaces in English** ("two words in one") and the
+    default detector skips faint/odd lines.
+  - **Max** = the measured-best English recipe: **`Rec.lang_type=EN`** (the
+    English-dedicated recognizer fixes spacing) + looser detection
+    (`Det.box_thresh=0.4`, `Det.unclip_ratio=2.0` — recovers skipped lines;
+    the default unclip crops glyphs so the rec garbles + score-filters them) +
+    `_prepared_input` (Lanczos ~2× pre-upscale of images < 1600 px, passed as a
+    **BGR ndarray**). Just as fast as Fast; only the ~10 MB en rec model
+    downloads once (rapidocr SHA-256-verifies its own downloads) into
+    `~/.bud3eij/models/rapidocr/` via `Global.model_root_dir` (NOT the package
+    dir — keeps the frozen exe folder pristine). **The PP-OCRv4 *server* models
+    were tested and rejected**: ~10× slower and they fragment/skip lines on
+    UI-style screenshots (tuned for large natural photos) — don't "upgrade" to
+    them without re-measuring.
+  Returns a GUI-agnostic `{"text", "lines": [(text, conf)], "count"}`. Sits
+  **outside** `convert_file`/`CONVERSIONS` (produces text, not a file). GUI
+  panel `_build_vg_ocr` + `_on_vgo_model_change`/`on_vg_ocr_drop`/
+  `browse_vg_ocr`/`set_vg_ocr_file` (via `_set_image_file`)/`on_vg_ocr_run`/
+  `_vg_ocr_worker`/`_vg_ocr_done`/`_vg_ocr_copy`: drop zone → **QUALITY**
+  segmented (`self.vgo_model`, Fast/Max) → **Extract Text** GradientButton →
+  eased-fill progress → results card with a read-only textbox + a **Copy to
+  clipboard** button (`clipboard_clear()`/`clipboard_append()` — pure Tk).
+  Zero lines found is a WARNING status, not an error. No history entries (like
+  the detector — nothing is saved to disk). Panel icon `assets/ui/scan-text.png`.
+  CLI: `--extract-text FILE [TIER]` (Fast/Max, prints the text).
+- **Vanguard → What's The Font (v3.2):** `identify_font(src, top_k=5)` in
+  `bud3eij/fontid.py` (lazy import) classifies the lettering in an image against
+  **~3,500 Google Fonts** with `storia/font-classify-onnx` (EfficientNet-B3, MIT)
+  on the already-bundled **onnxruntime**. Preprocessing **must mirror the
+  upstream pipeline exactly**: CutMax = *crop* (not resize) to 1024 →
+  letterbox-resize to the config's 320×320 with a **WHITE pad** → ImageNet
+  normalise → NCHW (a black pad made everything score as "Zilla Slab Highlight" —
+  cost real time in v3.2). `model.onnx` (~64 MB) + `model_config.yaml`
+  (classnames + input size) download SHA-256-verified (30 s timeout, **exact**
+  byte-size gate — a truncated download once passed a `>` min-size check) into
+  `~/.bud3eij/models/fontid/`; `_ensure_file` checks `sys._MEIPASS` first like
+  the upscaler. Returns `{"matches": [{"name","family","style","prob"}],
+  "model"}`, softmax top-k descending; `_display_name` splits classnames
+  (`AbhayaLibre-Bold` → "Abhaya Libre", "Bold"; `[wght]` suffix → "Variable").
+  **Closest-match only, never an exact ID** — commercial fonts come back as their
+  nearest Google lookalike; the UI disclaimer says so (tight crops of large text
+  work best — e.g. Inter → "Instrument Sans" at 86%). Session cached in
+  `fontid._SESSION` + `unload_models()`. GUI panel `_build_vg_font` +
+  `on_vg_font_drop`/`browse_vg_font`/`set_vg_font_file`/`on_vg_font_run`/
+  `_vg_font_worker`/`_vg_font_done`: drop zone → bare **Identify Font**
+  GradientButton (no blurb card — the 5-row results card needs the vertical room
+  at the default 1000×680 window) → eased-fill progress → results card with 5
+  pre-built rows (rank, name, confidence bar + %), disclaimer. Panel icon
+  `assets/ui/type.png`. CLI: `--identify-font FILE` (prints top-5).
   Marquee, Vanguard, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
   appearance toggle** (`_toggle_appearance`, `SUN_GLYPH`/`MOON_GLYPH` in
   "Segoe UI Symbol"), replacing the old Light/Dark/System dropdown. Each
@@ -313,9 +397,10 @@ still apply; only the file a function lives in changed.
   - The Recent table only refreshes when it's the visible frame
     (`self._current_frame`, set by `show_frame`); Tools stats refresh on show
     (`_refresh_tools`); a bare file argument to the exe preloads the Converter.
-- **Animated action buttons (`GradientButton`, redesigned v3.1.5):** all five
+- **Animated action buttons (`GradientButton`, redesigned v3.1.5):** all seven
   primary CTAs — Converter "Convert Now", YouTube "Download", Marquee "Remove
-  Background" + "Upscale Image", Vanguard "Detect AI Text" — are the same
+  Background" + "Upscale Image", Vanguard "Detect AI Text" + "Extract Text"
+  + "Identify Font" (the last two added v3.2) — are the same
   custom `GradientButton(ctk.CTkFrame)` (defined just above `class App`), not
   `CTkButton`s. CustomTkinter has no CSS, so the whole visual is **composed in
   Pillow** and animated by swapping a `CTkImage` on an inner label each tick.
@@ -328,7 +413,8 @@ still apply; only the file a function lives in changed.
   white flash** (`_celebrate` — the payoff; `_job_done` passes
   `success=error is None`). Busy = lava + **flowing diagonal candy stripes** +
   double shine + animated `busy_text` dots (per-button: Converting /
-  Downloading / Removing / Upscaling / Detecting); `icon=` names an
+  Downloading / Removing / Upscaling / Detecting / Extracting / Identifying);
+  `icon=` names an
   `assets/ui/*.png` tinted white. Drop-in API: `grid`, `command`,
   `configure(state=…)`, `start_busy()`/`stop_busy(success=…)`. Static layers
   cache by `(w, h, alive)` where **alive = enabled or busy** (a running button
@@ -385,7 +471,9 @@ still apply; only the file a function lives in changed.
 - **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT`,
   `--download URL FORMAT` (mp3/mp4, saves to cwd), `--remove-bg FILE [TIER]`
   (transparent PNG next to the source; TIER = Flash/Mid/Omega, default Mid),
-  `--upscale FILE [TARGET]` (1080p/2K/4K, default 2K), and `--detect FILE` run
+  `--upscale FILE [TARGET]` (1080p/2K/4K, default 2K), `--detect FILE`,
+  `--extract-text FILE [TIER]` (Fast/Max, prints the OCR'd text), and
+  `--identify-font FILE` (prints the top-5 font matches) run
   headless; extra positional args are rejected with a clear `parser.error`.
   No flags → GUI; a **bare file argument** (e.g. a file dragged onto the exe)
   opens the GUI with the Converter preloaded. All of these double as the way to
@@ -476,6 +564,8 @@ bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
   background.py   remove_background + BG_MODELS (Marquee bg remover)
   upscale.py      upscale_image + TARGETS (Marquee Real-ESRGAN upscaler)
   vanguard.py     detect_ai_text + CONFIDENCE_TIERS (Vanguard AI text detector)
+  ocr.py          extract_text (Vanguard Text Extraction, RapidOCR)
+  fontid.py       identify_font + FONTID_FILES (Vanguard What's The Font)
 requirements.txt  runtime deps (pyinstaller is dev-only, installed separately)
 README.md         user-facing docs
 CLAUDE.md         this file

@@ -35,7 +35,8 @@ FILETYPES = {
     "default": "default-file",
 }
 UI = ["house", "repeat", "clock", "layers", "youtube", "wrench",
-      "folder-open", "arrow-right", "arrow-left-right", "sparkles", "download"]
+      "folder-open", "arrow-right", "arrow-left-right", "sparkles", "download",
+      "shield-check", "scan-text", "type"]
 
 
 def get_svg(url: str) -> bytes:

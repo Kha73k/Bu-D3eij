@@ -15,4 +15,5 @@ rembg>=2.0.50
 numpy>=1.26
 onnxruntime>=1.16
 tokenizers>=0.15
+rapidocr>=3.0
 pywin32>=306 ; platform_system == "Windows"

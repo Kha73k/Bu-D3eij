@@ -96,12 +96,37 @@ check("unload note set", "unloaded" in a.tools_note.cget("text"))
 # GradientButton idle pause attributes
 check("convert button idle pause wired", hasattr(a.convert_btn, "_idle_ms"))
 
-# v3.1.5: all five action buttons share the animated GradientButton design
+# v3.2: Vanguard is a multi-tool page (AI Detector / Text Extraction / Font ID)
+a.show_frame("Vanguard")
+a.update()
+check("vg_tool switcher exists", hasattr(a, "vg_tool"))
+check("vg_tool has 3 tools", set(a.vg_panels) ==
+      {"AI Detector", "Text Extraction", "What's The Font"}, str(set(a.vg_panels)))
+a._show_vg_tool("Text Extraction")
+a.update()
+check("ocr panel shown", a.vg_panels["Text Extraction"].winfo_manager() == "grid")
+check("detector panel hidden", a.vg_panels["AI Detector"].winfo_manager() == "")
+a._show_vg_tool("What's The Font")
+a.update()
+check("font panel shown", a.vg_panels["What's The Font"].winfo_manager() == "grid")
+a._show_vg_tool("AI Detector")
+check("ocr results read-only",
+      str(a.vgo_out._textbox.cget("state")) == "disabled")
+check("ocr copy button exists", hasattr(a, "vgo_copy_btn"))
+check("ocr QUALITY selector", hasattr(a, "vgo_model") and a.vgo_model.get() == "Fast")
+a._on_vgo_model_change("Max")
+check("ocr tier caption updates",
+      "English" in a.vgo_model_caption.cget("text"))
+check("font has 5 result rows", len(a.vgf_rows) == 5)
+
+# v3.1.5/v3.2: all seven action buttons share the animated GradientButton design
 for name, btn, busy in [("convert", a.convert_btn, "Converting"),
                         ("youtube", a.yt_btn, "Downloading"),
                         ("bg-remover", a.mq_btn, "Removing"),
                         ("upscaler", a.up_btn, "Upscaling"),
-                        ("vanguard", a.vg_btn, "Detecting")]:
+                        ("vanguard", a.vg_btn, "Detecting"),
+                        ("vg-ocr", a.vgo_btn, "Extracting"),
+                        ("vg-font", a.vgf_btn, "Identifying")]:
     check(f"{name} button is a GradientButton",
           isinstance(btn, app.GradientButton))
     check(f"{name} busy text", getattr(btn, "_busy_text", "") == busy,
