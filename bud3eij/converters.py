@@ -30,6 +30,12 @@ def convert_image(src: Path, out: Path, target_ext: str) -> None:
     if not fmt:
         raise ConversionError(f"Unsupported image target: {target_ext}")
     with Image.open(str(src)) as img:
+        # Keep animation when both sides support it (GIF/WEBP/TIFF/APNG);
+        # otherwise only the first frame survives the conversion.
+        animated = getattr(img, "n_frames", 1) > 1
+        if animated and target_ext in ("gif", "webp", "tiff", "png"):
+            img.save(str(out), fmt, save_all=True)
+            return
         # Formats without an alpha channel need a flat RGB image.
         if target_ext in ("jpg", "jpeg", "bmp", "gif") and img.mode in ("RGBA", "LA", "P"):
             img = img.convert("RGB")
@@ -98,7 +104,7 @@ def docx_to_md(src: Path, out: Path) -> None:
 
 
 def docx_to_pdf(src: Path, out: Path) -> None:
-    """High-fidelity via MS Word (docx2pdf); falls back to a text-only PDF."""
+    """High-fidelity via MS Word (COM); falls back to a text-only PDF."""
     try:
         _docx_to_pdf_word(src, out)
     except Exception as word_err:  # noqa: BLE001 - want to fall back on anything
@@ -111,8 +117,10 @@ def docx_to_pdf(src: Path, out: Path) -> None:
 
 
 def _docx_to_pdf_word(src: Path, out: Path) -> None:
-    # docx2pdf drives MS Word through COM, which must be initialised on the
-    # current (possibly worker) thread.
+    # Word is driven through COM directly (not docx2pdf, which only Quit()s Word
+    # on success — any failure leaked a hidden WINWORD.EXE per attempt). COM must
+    # be initialised on the current (possibly worker) thread. Word.Application is
+    # multi-instance, so Dispatch always gives us our own instance to Quit.
     com_ready = False
     try:
         import pythoncom  # provided by pywin32
@@ -121,11 +129,26 @@ def _docx_to_pdf_word(src: Path, out: Path) -> None:
         com_ready = True
     except Exception:  # noqa: BLE001
         pass
+    word = None
     try:
-        from docx2pdf import convert as docx2pdf_convert
+        import win32com.client
 
-        docx2pdf_convert(str(src), str(out))
+        word = win32com.client.Dispatch("Word.Application")
+        try:
+            word.DisplayAlerts = 0  # never block on dialogs from a hidden instance
+        except Exception:  # noqa: BLE001
+            pass
+        doc = word.Documents.Open(str(src.resolve()), ReadOnly=True)
+        try:
+            doc.SaveAs(str(out.resolve()), FileFormat=17)  # 17 = wdFormatPDF
+        finally:
+            doc.Close(0)  # 0 = wdDoNotSaveChanges
     finally:
+        if word is not None:
+            try:
+                word.Quit()
+            except Exception:  # noqa: BLE001
+                pass
         if com_ready:
             try:
                 import pythoncom
@@ -134,7 +157,7 @@ def _docx_to_pdf_word(src: Path, out: Path) -> None:
             except Exception:  # noqa: BLE001
                 pass
     if not out.exists():
-        raise ConversionError("docx2pdf produced no output (is Microsoft Word installed?)")
+        raise ConversionError("Word produced no output (is Microsoft Word installed?)")
 
 
 def _docx_to_pdf_reportlab(src: Path, out: Path) -> None:
@@ -302,10 +325,15 @@ def _pptx_to_pdf_powerpoint(src: Path, out: Path) -> None:
     except Exception:  # noqa: BLE001
         pass
     powerpoint = None
-    try:
-        import win32com.client
+    owned = False  # PowerPoint is single-instance COM: Dispatch attaches to a
+    try:           # running PowerPoint, and Quit() would close the user's open
+        import win32com.client  # presentations. Only Quit an instance we started.
 
-        powerpoint = win32com.client.Dispatch("PowerPoint.Application")
+        try:
+            powerpoint = win32com.client.GetActiveObject("PowerPoint.Application")
+        except Exception:  # noqa: BLE001 - not running -> start our own
+            powerpoint = win32com.client.Dispatch("PowerPoint.Application")
+            owned = True
         presentation = powerpoint.Presentations.Open(
             str(src.resolve()), ReadOnly=True, WithWindow=False
         )
@@ -314,7 +342,7 @@ def _pptx_to_pdf_powerpoint(src: Path, out: Path) -> None:
         finally:
             presentation.Close()
     finally:
-        if powerpoint is not None:
+        if powerpoint is not None and owned:
             try:
                 powerpoint.Quit()
             except Exception:  # noqa: BLE001
@@ -394,7 +422,12 @@ def convert_av(src: Path, out: Path, target_ext: str) -> None:
         ffmpeg.run(stream, overwrite_output=True, quiet=True)
     except ffmpeg.Error as exc:  # type: ignore[attr-defined]
         detail = exc.stderr.decode("utf-8", "ignore") if getattr(exc, "stderr", None) else str(exc)
-        raise ConversionError(f"ffmpeg failed: {detail}") from exc
+        # The full stderr can be many KB and would distort the status label;
+        # keep the tail (where ffmpeg states the actual error) for the message.
+        print(f"[convert_av] ffmpeg stderr:\n{detail}", file=sys.stderr)
+        tail = [ln.strip() for ln in detail.strip().splitlines() if ln.strip()][-3:]
+        short = " · ".join(tail)[:400] if tail else str(exc)[:400]
+        raise ConversionError(f"ffmpeg failed: {short}") from exc
 
 
 def convert_file(src, target_ext: str, out_dir=None) -> Path:

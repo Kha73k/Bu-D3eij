@@ -12,10 +12,11 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import traceback
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -104,7 +105,10 @@ def load_history() -> list[dict]:
     """Load saved conversion history (newest first). Never raises."""
     try:
         data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            return []
+        # Drop malformed entries — one non-dict would crash the Recent table.
+        return [e for e in data if isinstance(e, dict)]
     except Exception:  # noqa: BLE001 - missing/corrupt file is fine
         return []
 
@@ -116,6 +120,32 @@ def save_history(history: list[dict]) -> None:
         HISTORY_FILE.write_text(json.dumps(history, indent=2), encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
         print("Could not save history:", exc)
+
+
+def _setup_frozen_logging() -> None:
+    """Give the windowed exe somewhere to print: tee stdout/stderr to a log file.
+
+    In a PyInstaller --windowed build there is no console, so every print()
+    and traceback silently vanishes — field failures become undebuggable.
+    Never raises; a failure here just keeps the silent behaviour.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        log_path = APP_DATA_DIR / "app.log"
+        if log_path.exists() and log_path.stat().st_size > 1_000_000:
+            log_path.unlink()  # crude size cap; this is a diagnostics tail
+        stream = open(log_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+        stream.write(f"\n--- {APP_NAME} session {datetime.now():%Y-%m-%d %H:%M:%S} ---\n")
+        if sys.stdout is None:
+            sys.stdout = stream
+        if sys.stderr is None:
+            sys.stderr = stream
+    except Exception:  # noqa: BLE001 - logging must never block startup
+        pass
 
 
 # --------------------------------------------------------------------------- #
@@ -142,18 +172,19 @@ MUTED = ("#595155", "#9C9194")
 # Surfaces for the 1.4 redesign (light, dark).
 CARD = ("#FFFFFF", "#252022")          # elevated card / panel
 CARD_BORDER = ("#E8E1E2", "#332D30")   # hairline card border
+CARD_SOFT = ("#DFD9DA", "#2B2629")     # soft controls card (every tool page)
 SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.1"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
     "pdf": "pdf", "docx": "word", "doc": "word", "txt": "text", "md": "markdown",
     "pptx": "powerpoint", "ppt": "powerpoint",
     "jpg": "image", "jpeg": "image", "png": "image", "webp": "image",
-    "bmp": "image", "gif": "image", "tiff": "image",
+    "bmp": "image", "gif": "image", "tiff": "image", "tif": "image",
     "mp4": "video", "mp3": "audio", "wav": "audio",
 }
 
@@ -216,6 +247,7 @@ class GradientButton(ctk.CTkFrame):
         self._glow = 0.0      # eased glow amount 0..1
         self._dots = 0        # animated "Converting…" dot count
         self._dot_acc = 0
+        self._idle_ms = 0     # ms without hover/press/busy; pauses the loop
         self._anim_id = None
         self._resize_id = None
         # cached static layers (rebuilt on size/state change)
@@ -279,9 +311,13 @@ class GradientButton(ctk.CTkFrame):
         self._render()
 
     # ---- event handlers -------------------------------------------------- #
+    IDLE_PAUSE_MS = 12_000  # stop the idle shine after this long without input
+
     def _on_enter(self, _e):
         if self._enabled and not self._busy:
             self._hover = True
+            self._idle_ms = 0
+            self._start()  # resume if the idle pause stopped the loop
 
     def _on_leave(self, _e):
         self._hover = False
@@ -362,6 +398,16 @@ class GradientButton(ctk.CTkFrame):
             if self._dot_acc >= 400:
                 self._dot_acc = 0
                 self._dots = (self._dots + 1) % 4
+        # Pause the idle animation after a while (the Converter is the landing
+        # page, so a forever-spinning shine is constant CPU/battery drain).
+        # Hover, busy or re-mapping resumes it via _start().
+        if self._busy or self._hover or self._press:
+            self._idle_ms = 0
+        else:
+            self._idle_ms += interval
+            if self._idle_ms >= self.IDLE_PAUSE_MS:
+                self._render()
+                return
         self._render()
         if self._busy or self._enabled:
             self._anim_id = self.after(interval, self._tick)
@@ -569,9 +615,16 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.marquee_file: Path | None = None
         self.upscale_file: Path | None = None
         self.vanguard_file: Path | None = None
+        self.batch_export_dir: Path | None = None
         self.history: list[dict] = load_history()
         self.appearance_mode = "Dark"  # toggled by the sun/moon button
         self._icon_cache: dict = {}  # (kind, name, size, colors) -> CTkImage
+        self._current_frame = ""     # set by show_frame
+        self._last_dirs: dict[str, str] = {}  # last-used folder per dialog
+        self._active_jobs = 0        # running worker threads (close guard)
+        self._convert_run = 0        # generation counter: Clear invalidates a run
+        self._vg_run = 0             # generation counter: Reset invalidates a run
+        self._vg_detecting = False   # a Vanguard detect worker is in flight
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -579,6 +632,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._build_sidebar()
         self._build_frames()
         self.show_frame("Converter")
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _set_window_icon(self):
         self._icon_path = resource_path("AppLogo.ico")
@@ -770,10 +824,27 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         for frame in self.frames.values():
             frame.grid(row=0, column=0, sticky="nsew")
 
+    # ---- worker-job bookkeeping (close guard) ----------------------------- #
+    def _job_started(self):
+        self._active_jobs += 1
+
+    def _job_finished(self):
+        self._active_jobs = max(0, self._active_jobs - 1)
+
+    def _on_close(self):
+        if self._active_jobs > 0 and not messagebox.askyesno(
+            APP_NAME,
+            "A job is still running — quit anyway?\n"
+            "Its output may be incomplete.",
+        ):
+            return
+        self.destroy()
+
     def show_frame(self, name: str):
         frame = self.frames.get(name)
         if frame is None:
             return
+        self._current_frame = name
         # grid/grid_remove (not tkraise) so a CTkScrollableFrame raises reliably
         # above the plain sibling frames sharing the same grid cell.
         for f in self.frames.values():
@@ -791,6 +862,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             )
         if name == "Recent":
             self._refresh_recent()
+        elif name == "Tools":
+            self._refresh_tools()
 
     def _toggle_appearance(self):
         """Flip between Dark and Light; the icon shows the mode you can switch to."""
@@ -876,6 +949,21 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
             command=lambda: self.show_frame("YouTube"),
         ).pack(side="left")
+        # Second row: the newer sections deserve a front-door too.
+        actions2 = ctk.CTkFrame(text, fg_color="transparent")
+        actions2.pack(anchor="w", pady=(10, 0))
+        ctk.CTkButton(
+            actions2, text=" Marquee", height=42, image=self._ui_icon("sparkles", 18),
+            compound="left", fg_color="transparent", border_width=2, border_color=RED,
+            text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
+            command=lambda: self.show_frame("Marquee"),
+        ).pack(side="left", padx=(0, 10))
+        ctk.CTkButton(
+            actions2, text=" Vanguard", height=42, image=self._ui_icon("shield-check", 18),
+            compound="left", fg_color="transparent", border_width=2, border_color=RED,
+            text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
+            command=lambda: self.show_frame("Vanguard"),
+        ).pack(side="left")
 
         cluster = ctk.CTkFrame(hero, fg_color="transparent")
         cluster.grid(row=0, column=1, padx=(8, 26), pady=20, sticky="e")
@@ -933,26 +1021,19 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         frame.grid_columnconfigure(0, weight=1)
         self._section_header(frame, "Tools", "Status and utilities.")
 
-        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card = ctk.CTkFrame(frame, fg_color=CARD_SOFT, corner_radius=12)
         card.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 12))
         card.grid_columnconfigure(1, weight=1)
 
-        ffmpeg_ok = shutil.which("ffmpeg") is not None
-        rows = [
-            ("FFmpeg (audio / video)",
-             "Available" if ffmpeg_ok else "Not found on PATH",
-             SUCCESS if ffmpeg_ok else WARNING),
-            ("History", f"{len(self.history)} conversion(s) recorded", MUTED),
-            ("Version", f"Bu D3eij {APP_VERSION}", MUTED),
-        ]
-        for r, (label, value, color) in enumerate(rows):
+        self.tools_values: dict[str, ctk.CTkLabel] = {}
+        for r, label in enumerate(["FFmpeg (audio / video)", "History", "Version"]):
             top = 14 if r == 0 else 6
             ctk.CTkLabel(
                 card, text=label, font=self._font(12, "medium"), anchor="w",
             ).grid(row=r, column=0, sticky="w", padx=(18, 12), pady=(top, 6))
-            ctk.CTkLabel(card, text=value, text_color=color, anchor="w").grid(
-                row=r, column=1, sticky="w", padx=(0, 18), pady=(top, 6)
-            )
+            value = ctk.CTkLabel(card, text="", text_color=MUTED, anchor="w")
+            value.grid(row=r, column=1, sticky="w", padx=(0, 18), pady=(top, 6))
+            self.tools_values[label] = value
 
         btns = ctk.CTkFrame(frame, fg_color="transparent")
         btns.grid(row=2, column=0, sticky="w", padx=24, pady=(2, 12))
@@ -963,14 +1044,60 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         ctk.CTkButton(
             btns, text="Reveal last output", width=170,
             fg_color="gray50", hover_color="gray40", command=self._open_last_output,
-        ).grid(row=0, column=1)
+        ).grid(row=0, column=1, padx=(0, 10))
+        ctk.CTkButton(
+            btns, text="Unload AI models", width=170,
+            fg_color="gray50", hover_color="gray40", command=self._unload_models,
+        ).grid(row=0, column=2)
+
+        self.tools_note = ctk.CTkLabel(
+            frame, text="", text_color=MUTED, anchor="w", justify="left",
+            wraplength=620,
+        )
+        self.tools_note.grid(row=3, column=0, sticky="w", padx=24, pady=(0, 12))
+
+        self._refresh_tools()
         return frame
+
+    def _refresh_tools(self):
+        """Recompute the Tools status rows (they go stale while the app runs)."""
+        if not hasattr(self, "tools_values"):
+            return
+        ffmpeg_ok = shutil.which("ffmpeg") is not None
+        self.tools_values["FFmpeg (audio / video)"].configure(
+            text="Available" if ffmpeg_ok else "Not found on PATH",
+            text_color=SUCCESS if ffmpeg_ok else WARNING,
+        )
+        self.tools_values["History"].configure(
+            text=f"{len(self.history)} conversion(s) recorded")
+        self.tools_values["Version"].configure(text=f"Bu D3eij {APP_VERSION}")
+
+    def _unload_models(self):
+        """Free the cached AI sessions (rembg, upscaler, detector) to reclaim RAM."""
+        if self._active_jobs > 0:
+            self.tools_note.configure(
+                text="Can't unload while a job is running — try again when it finishes.",
+                text_color=WARNING)
+            return
+        from bud3eij import background, upscale, vanguard
+
+        background.unload_models()
+        upscale.unload_models()
+        vanguard.unload_models()
+        import gc
+
+        gc.collect()
+        self.tools_note.configure(
+            text="AI models unloaded — they'll reload automatically on next use.",
+            text_color=SUCCESS)
 
     def _open_last_output(self):
         for entry in self.history:
             if entry.get("ok") and entry.get("output"):
                 self.open_folder(entry["output"])
                 return
+        self.tools_note.configure(
+            text="No successful output to reveal yet.", text_color=MUTED)
 
     # ---- recent view ----------------------------------------------------- #
     def _recent_columns(self, widget) -> None:
@@ -1090,9 +1217,17 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.history.insert(0, entry)
         del self.history[MAX_HISTORY:]
         save_history(self.history)
-        self.after(0, self._refresh_recent)
+        # Rebuilding the table is expensive (up to 100 rows of widgets); only do
+        # it when Recent is actually on screen — show_frame refreshes otherwise.
+        if self._current_frame == "Recent":
+            self.after(0, self._refresh_recent)
 
     def clear_history(self):
+        if self.history and not messagebox.askyesno(
+            APP_NAME, f"Delete all {len(self.history)} history entries?\n"
+                      "This can't be undone (the converted files stay on disk)."
+        ):
+            return
         self.history = []
         save_history(self.history)
         self._refresh_recent()
@@ -1121,37 +1256,20 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._section_header(frame, "Converter", "Drop a file, choose a format, convert.")
 
         # ---- drop zone ----
-        self.drop_zone = ctk.CTkFrame(
-            frame, height=200, corner_radius=14, border_width=2, border_color=DROP_BORDER
-        )
-        self.drop_zone.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 14))
-        self.drop_zone.grid_propagate(False)
-        self.drop_zone.grid_columnconfigure(0, weight=1)
-        self.drop_zone.grid_rowconfigure(0, weight=1)
-        inner = ctk.CTkFrame(self.drop_zone, fg_color="transparent")
-        inner.grid(row=0, column=0)
         # On-theme folder icon from bundled assets (renders in the frozen exe;
         # AppLogo.png was never bundled). Swapped for the file's type icon on drop.
         self.drop_icon = self._ui_icon("folder-open", 46, light=RED, dark=RED_BRIGHT)
-        self.drop_icon_label = ctk.CTkLabel(inner, text="", image=self.drop_icon)
-        self.drop_icon_label.pack(pady=(0, 8))
-        self.drop_primary = ctk.CTkLabel(
-            inner, text="Drag & drop a file here",
-            font=self._font(16, "semibold"),
+        dz = self._build_drop_zone(
+            frame, row=1, icon=self.drop_icon, title="Drag & drop a file here",
+            hint="or click to browse", on_drop=self.on_drop, on_click=self.browse_file,
         )
-        self.drop_primary.pack()
-        self.drop_secondary = ctk.CTkLabel(inner, text="or click to browse", text_color=MUTED)
-        self.drop_secondary.pack(pady=(2, 0))
-        self._register_drop(
-            self.drop_zone,
-            (self.drop_zone, inner, self.drop_icon_label, self.drop_primary, self.drop_secondary),
-            self.on_drop, self.browse_file,
-        )
-        # Wrap the filename / hint text to the zone width so long names stay inside.
-        self._make_labels_wrap(self.drop_zone, (self.drop_primary, self.drop_secondary))
+        self.drop_zone = dz["zone"]
+        self.drop_icon_label = dz["icon"]
+        self.drop_primary = dz["primary"]
+        self.drop_secondary = dz["secondary"]
 
         # ---- controls card ----
-        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card = ctk.CTkFrame(frame, fg_color=CARD_SOFT, corner_radius=12)
         card.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 12))
         card.grid_columnconfigure(0, weight=1)
 
@@ -1211,26 +1329,14 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self._section_header(frame, "Batch Convert", "Convert many files to one format at once.")
 
-        self.batch_drop = ctk.CTkFrame(
-            frame, height=120, corner_radius=14, border_width=2, border_color=DROP_BORDER
+        dz = self._build_drop_zone(
+            frame, row=1, icon=None, title="Drop multiple files here",
+            hint="or click to browse", on_drop=self.on_batch_drop,
+            on_click=self.browse_batch, height=120, title_size=15,
         )
-        self.batch_drop.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 12))
-        self.batch_drop.grid_propagate(False)
-        self.batch_drop.grid_columnconfigure(0, weight=1)
-        self.batch_drop.grid_rowconfigure(0, weight=1)
-        binner = ctk.CTkFrame(self.batch_drop, fg_color="transparent")
-        binner.grid(row=0, column=0)
-        self.batch_primary = ctk.CTkLabel(
-            binner, text="Drop multiple files here",
-            font=self._font(15, "semibold"),
-        )
-        self.batch_primary.pack()
-        self.batch_label = ctk.CTkLabel(binner, text="or click to browse", text_color=MUTED)
-        self.batch_label.pack(pady=(2, 0))
-        self._register_drop(
-            self.batch_drop, (self.batch_drop, binner, self.batch_primary, self.batch_label),
-            self.on_batch_drop, self.browse_batch,
-        )
+        self.batch_drop = dz["zone"]
+        self.batch_primary = dz["primary"]
+        self.batch_label = dz["secondary"]
 
         ctrl = ctk.CTkFrame(frame, fg_color="transparent")
         ctrl.grid(row=2, column=0, sticky="w", padx=24, pady=8)
@@ -1243,13 +1349,26 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             command=self.on_batch_convert, state="disabled",
         )
         self.batch_btn.grid(row=0, column=2)
+        ctk.CTkButton(
+            ctrl, text="Save to…", width=90, fg_color="gray50", hover_color="gray40",
+            command=self.choose_batch_export,
+        ).grid(row=0, column=3, padx=(16, 8))
+        self.batch_export_label = ctk.CTkLabel(
+            ctrl, text="Output: next to each source", text_color=MUTED)
+        self.batch_export_label.grid(row=0, column=4)
 
+        # Read-only log: a Textbox is the right widget, but the user shouldn't
+        # be able to type into their own results. Writes toggle the state.
         self.batch_list = ctk.CTkTextbox(frame, corner_radius=10)
         self.batch_list.grid(row=3, column=0, sticky="nsew", padx=24, pady=8)
+        self.batch_list.configure(state="disabled")
 
         self.batch_progress = ctk.CTkProgressBar(frame, height=8)
         self.batch_progress.set(0)
-        self.batch_progress.grid(row=4, column=0, sticky="ew", padx=24, pady=(0, 18))
+        self.batch_progress.grid(row=4, column=0, sticky="ew", padx=24, pady=(0, 4))
+
+        self.batch_status = ctk.CTkLabel(frame, text="", text_color=MUTED, anchor="w")
+        self.batch_status.grid(row=5, column=0, sticky="w", padx=24, pady=(0, 14))
         return frame
 
     # ---- drag & drop helpers -------------------------------------------- #
@@ -1304,20 +1423,118 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         tail = limit - 1 - head
         return f"{text[:head]}…{text[-tail:]}"
 
+    # ---- file dialogs that remember their last folder (per dialog key) ---- #
+    def _ask_open(self, key: str, **kwargs) -> str:
+        init = self._last_dirs.get(key)
+        if init:
+            kwargs.setdefault("initialdir", init)
+        path = filedialog.askopenfilename(**kwargs)
+        if path:
+            self._last_dirs[key] = str(Path(path).parent)
+        return path
+
+    def _ask_open_multiple(self, key: str, **kwargs) -> tuple[str, ...]:
+        init = self._last_dirs.get(key)
+        if init:
+            kwargs.setdefault("initialdir", init)
+        paths = filedialog.askopenfilenames(**kwargs)
+        if paths:
+            self._last_dirs[key] = str(Path(paths[0]).parent)
+        return paths
+
+    def _ask_save(self, key: str, **kwargs) -> str:
+        init = self._last_dirs.get(key)
+        if init:
+            kwargs.setdefault("initialdir", init)
+        path = filedialog.asksaveasfilename(**kwargs)
+        if path:
+            self._last_dirs[key] = str(Path(path).parent)
+        return path
+
+    def _ask_dir(self, key: str, title: str) -> str:
+        init = self._last_dirs.get(key)
+        kwargs = {"initialdir": init} if init else {}
+        folder = filedialog.askdirectory(title=title, **kwargs)
+        if folder:
+            self._last_dirs[key] = folder
+        return folder
+
+    # ---- shared tool-panel builders -------------------------------------- #
+    def _build_drop_zone(self, parent, *, row: int, icon, title: str, hint: str,
+                         on_drop, on_click, height: int = 200,
+                         title_size: int = 16) -> dict:
+        """Build the standard bordered drop zone every tool page uses.
+
+        Returns its widgets: {"zone", "icon" (label or None), "primary",
+        "secondary"} — the callers keep their own attribute names.
+        """
+        zone = ctk.CTkFrame(parent, height=height, corner_radius=14,
+                            border_width=2, border_color=DROP_BORDER)
+        zone.grid(row=row, column=0, sticky="ew", padx=24, pady=(4, 14))
+        zone.grid_propagate(False)
+        zone.grid_columnconfigure(0, weight=1)
+        zone.grid_rowconfigure(0, weight=1)
+        inner = ctk.CTkFrame(zone, fg_color="transparent")
+        inner.grid(row=0, column=0)
+        widgets: list = [zone, inner]
+        icon_label = None
+        if icon is not None:
+            icon_label = ctk.CTkLabel(inner, text="", image=icon)
+            icon_label.pack(pady=(0, 8))
+            widgets.append(icon_label)
+        primary = ctk.CTkLabel(inner, text=title, font=self._font(title_size, "semibold"))
+        primary.pack()
+        secondary = ctk.CTkLabel(inner, text=hint, text_color=MUTED)
+        secondary.pack(pady=(2, 0))
+        widgets += [primary, secondary]
+        self._register_drop(zone, tuple(widgets), on_drop, on_click)
+        # Wrap the filename / hint text to the zone width so long names stay inside.
+        self._make_labels_wrap(zone, (primary, secondary))
+        return {"zone": zone, "icon": icon_label, "primary": primary, "secondary": secondary}
+
+    def _job_done(self, *, status_label, progress_bar, button,
+                  src, out, error) -> None:
+        """Shared end-of-job UI: hide progress, re-enable, report, record history."""
+        self._job_finished()
+        progress_bar.stop()
+        progress_bar.grid_remove()
+        progress_bar.configure(mode="determinate")
+        progress_bar.set(0)
+        button.configure(state="normal")
+        if error:
+            status_label.configure(text=f"✕  {error}", text_color=ERROR)
+            self.add_history(src, None, False, error)
+        else:
+            status_label.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
+            self.add_history(src, out, True)
+
+    @staticmethod
+    def _not_a_file_message(path: Path) -> str:
+        """Accurate copy for a drop that isn't a usable file."""
+        if path.is_dir():
+            return "That's a folder — drop a single file."
+        return "Please drop a single file."
+
     # ---- converter actions ---------------------------------------------- #
     def on_drop(self, event):
         paths = self._parse_drop(event)
-        if paths:
-            self.set_file(paths[0])
+        if not paths:
+            return
+        self.set_file(paths[0])
+        if len(paths) > 1 and self.selected_file == paths[0]:
+            self.status.configure(
+                text=f"{len(paths)} files dropped — using {paths[0].name}. "
+                     "Use Batch Convert for many files at once.",
+                text_color=WARNING)
 
     def browse_file(self):
-        path = filedialog.askopenfilename(title="Select a file to convert")
+        path = self._ask_open("convert", title="Select a file to convert")
         if path:
             self.set_file(Path(path))
 
     def set_file(self, path: Path):
         if not path.is_file():
-            self.status.configure(text="Please drop a single file.", text_color=WARNING)
+            self.status.configure(text=self._not_a_file_message(path), text_color=WARNING)
             return
         self.selected_file = path
         ext = detect_format(path)
@@ -1344,18 +1561,20 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.to_menu.configure(values=["-"], state="disabled")
             self.to_menu.set("-")
             self.convert_btn.configure(state="disabled")
-            self.status.configure(text=f"Unsupported format: .{ext}", text_color=WARNING)
+            self.status.configure(text=f"Unsupported format: .{ext or '?'}", text_color=WARNING)
 
     def choose_export_path(self):
-        folder = filedialog.askdirectory(title="Choose where to save converted files")
+        folder = self._ask_dir("export", "Choose where to save converted files")
         if folder:
             self.export_dir = Path(folder)
             self.export_label.configure(text=f"Output: {self._ellipsize(str(self.export_dir))}")
 
     def clear_converter(self):
         """Reset the converter to a clean slate for the next file."""
+        self._convert_run += 1  # invalidate any in-flight conversion's UI updates
         self.selected_file = None
         self.export_dir = None
+        self.convert_btn.stop_busy()
         if self.drop_icon is not None:
             self.drop_icon_label.configure(image=self.drop_icon)
         self.drop_primary.configure(text="Drag & drop a file here")
@@ -1378,6 +1597,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         target = self.to_menu.get()
         if target in ("-", ""):
             return
+        self._convert_run += 1
+        run = self._convert_run
+        self._job_started()
         self.convert_btn.configure(state="disabled")
         self.convert_btn.start_busy()
         self.progress.grid()
@@ -1388,39 +1610,45 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             text_color=MUTED,
         )
         threading.Thread(
-            target=self._convert_worker, args=(self.selected_file, target), daemon=True
+            target=self._convert_worker, args=(self.selected_file, target, run),
+            daemon=True,
         ).start()
 
-    def _convert_worker(self, src: Path, target: str):
+    def _convert_worker(self, src: Path, target: str, run: int):
         try:
             out = convert_file(src, target, self.export_dir)
-            self.after(0, self._convert_done, src, out, None)
+            self.after(0, self._convert_done, src, out, None, run)
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
-            self.after(0, self._convert_done, src, None, exc)
+            self.after(0, self._convert_done, src, None, exc, run)
 
-    def _convert_done(self, src: Path, out: Path | None, error: Exception | None):
-        self.progress.stop()
-        self.progress.grid_remove()
-        self.progress.configure(mode="determinate")
-        self.progress.set(0)
-        self.convert_btn.configure(state="normal")
+    def _convert_done(self, src: Path, out: Path | None, error: Exception | None,
+                      run: int):
+        if run != self._convert_run:
+            # The user hit Clear while this ran: record the result (it happened),
+            # but don't resurrect status/progress over the cleared form.
+            self._job_finished()
+            self.add_history(src, out, error is None, error or "")
+            return
         self.convert_btn.stop_busy()
-        if error:
-            self.status.configure(text=f"✕  {error}", text_color=ERROR)
-            self.add_history(src, None, False, error)
-        else:
-            self.status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
-            self.add_history(src, out, True)
+        self._job_done(status_label=self.status, progress_bar=self.progress,
+                       button=self.convert_btn, src=src, out=out, error=error)
 
     # ---- batch actions --------------------------------------------------- #
     def on_batch_drop(self, event):
         self.set_batch(self._parse_drop(event))
 
     def browse_batch(self):
-        paths = filedialog.askopenfilenames(title="Select files to convert")
+        paths = self._ask_open_multiple("batch", title="Select files to convert")
         if paths:
             self.set_batch([Path(p) for p in paths])
+
+    def choose_batch_export(self):
+        folder = self._ask_dir("batch_export", "Choose where to save converted files")
+        if folder:
+            self.batch_export_dir = Path(folder)
+            self.batch_export_label.configure(
+                text=f"Output: {self._ellipsize(str(self.batch_export_dir), 36)}")
 
     def set_batch(self, paths: list[Path]):
         self.batch_files = [p for p in paths if p.is_file()]
@@ -1434,9 +1662,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
         self.batch_primary.configure(text=f"{len(self.batch_files)} file(s) selected")
         self.batch_label.configure(text="click to choose different files")
-        self.batch_list.delete("1.0", "end")
+        self._batch_clear_log()
         for p in self.batch_files:
-            self.batch_list.insert("end", f"- {p.name}\n")
+            self._batch_log(f"- {p.name}")
 
         if common_sorted:
             self.batch_to.configure(values=common_sorted, state="normal")
@@ -1446,27 +1674,28 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.batch_to.configure(values=["-"], state="disabled")
             self.batch_to.set("-")
             self.batch_btn.configure(state="disabled")
-            self.batch_list.insert(
-                "end", "\nNo common target format. Try files of the same type.\n"
-            )
+            self._batch_log("\nNo common target format. Try files of the same type.")
 
     def on_batch_convert(self):
         target = self.batch_to.get()
         if target in ("-", "") or not self.batch_files:
             return
+        self._job_started()
         self.batch_btn.configure(state="disabled")
         self.batch_progress.set(0)
-        self.batch_list.delete("1.0", "end")
+        self.batch_status.configure(text=f"0 / {len(self.batch_files)} processed")
+        self._batch_clear_log()
         files = list(self.batch_files)
         threading.Thread(
-            target=self._batch_worker, args=(files, target), daemon=True
+            target=self._batch_worker, args=(files, target, self.batch_export_dir),
+            daemon=True,
         ).start()
 
-    def _batch_worker(self, files: list[Path], target: str):
+    def _batch_worker(self, files: list[Path], target: str, out_dir: Path | None):
         total = len(files)
         for i, p in enumerate(files, start=1):
             try:
-                out = convert_file(p, target)
+                out = convert_file(p, target, out_dir)
                 self.after(0, self._batch_log, f"OK   {p.name} -> {out.name}")
                 # Marshal history updates to the main thread (self.history is shared
                 # with the UI; mutating it off-thread can race with _refresh_recent).
@@ -1476,12 +1705,24 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                 self.after(0, self._batch_log, f"FAIL {p.name}: {exc}")
                 self.after(0, self.add_history, p, None, False, exc)
             self.after(0, self.batch_progress.set, i / total)
+            self.after(0, self._batch_count, i, total)
+        self.after(0, self._job_finished)
         self.after(0, lambda: self.batch_btn.configure(state="normal"))
         self.after(0, self._batch_log, f"\nDone: {total} file(s) processed.")
 
+    def _batch_count(self, done: int, total: int):
+        self.batch_status.configure(text=f"{done} / {total} processed")
+
+    def _batch_clear_log(self):
+        self.batch_list.configure(state="normal")
+        self.batch_list.delete("1.0", "end")
+        self.batch_list.configure(state="disabled")
+
     def _batch_log(self, msg: str):
+        self.batch_list.configure(state="normal")
         self.batch_list.insert("end", msg + "\n")
         self.batch_list.see("end")
+        self.batch_list.configure(state="disabled")
 
     # ---- youtube view ---------------------------------------------------- #
     def _build_youtube(self, parent) -> ctk.CTkFrame:
@@ -1489,7 +1730,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         frame.grid_columnconfigure(0, weight=1)
         self._section_header(frame, "YouTube", "Paste a link, pick a format, download.")
 
-        card = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card = ctk.CTkFrame(frame, fg_color=CARD_SOFT, corner_radius=12)
         card.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 12))
         card.grid_columnconfigure(0, weight=1)
 
@@ -1539,10 +1780,12 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.yt_status.configure(text="Please paste a video URL.", text_color=WARNING)
             return
         fmt = self.yt_format.get().lower()
-        folder = filedialog.askdirectory(title="Choose where to save the download")
+        folder = self._ask_dir("youtube", "Choose where to save the download")
         if not folder:
             self.yt_status.configure(text="Download cancelled (no folder chosen).", text_color=MUTED)
             return
+        self._job_started()
+        self._yt_last_ui = 0.0
         self.yt_btn.configure(state="disabled")
         self.yt_progress.grid()
         self.yt_progress.configure(mode="determinate")
@@ -1562,10 +1805,16 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _yt_hook(self, d: dict):
         # Runs on the worker thread; marshal everything to the UI thread.
+        # yt-dlp fires this per network block — throttle, or hundreds of queued
+        # after(0) UI updates per second choke the Tk event loop.
         status = d.get("status")
         if status == "downloading":
+            now = time.monotonic()
+            if now - getattr(self, "_yt_last_ui", 0.0) < 0.1:
+                return
+            self._yt_last_ui = now
             total = d.get("total_bytes") or d.get("total_bytes_estimate")
-            done = d.get("downloaded_bytes", 0)
+            done = d.get("downloaded_bytes") or 0
             if total:
                 self.after(0, self._yt_progress_set, done / total,
                            f"Downloading… {int(done / total * 100)}%")
@@ -1588,17 +1837,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.yt_status.configure(text=text, text_color=MUTED)
 
     def _youtube_done(self, url: str, out: Path | None, error: Exception | None):
-        self.yt_progress.stop()
-        self.yt_progress.grid_remove()
-        self.yt_progress.configure(mode="determinate")
-        self.yt_progress.set(0)
-        self.yt_btn.configure(state="normal")
-        if error:
-            self.yt_status.configure(text=f"✕  {error}", text_color=ERROR)
-            self.add_history(url, None, False, error)
-        else:
-            self.yt_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
-            self.add_history(url, out, True)
+        self._job_done(status_label=self.yt_status, progress_bar=self.yt_progress,
+                       button=self.yt_btn, src=url, out=out, error=error)
 
     # ---- marquee (image editing) view ------------------------------------ #
     def _build_marquee(self, parent) -> ctk.CTkFrame:
@@ -1644,33 +1884,18 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         panel = ctk.CTkFrame(parent, fg_color="transparent")
         panel.grid_columnconfigure(0, weight=1)
 
-        self.mq_drop = ctk.CTkFrame(
-            panel, height=200, corner_radius=14, border_width=2, border_color=DROP_BORDER
-        )
-        self.mq_drop.grid(row=0, column=0, sticky="ew", padx=24, pady=(4, 14))
-        self.mq_drop.grid_propagate(False)
-        self.mq_drop.grid_columnconfigure(0, weight=1)
-        self.mq_drop.grid_rowconfigure(0, weight=1)
-        inner = ctk.CTkFrame(self.mq_drop, fg_color="transparent")
-        inner.grid(row=0, column=0)
         self.mq_drop_icon = self._ui_icon("sparkles", 46, light=RED, dark=RED_BRIGHT)
-        self.mq_icon_label = ctk.CTkLabel(inner, text="", image=self.mq_drop_icon)
-        self.mq_icon_label.pack(pady=(0, 8))
-        self.mq_primary = ctk.CTkLabel(
-            inner, text="Drag & drop an image here",
-            font=self._font(16, "semibold"),
+        dz = self._build_drop_zone(
+            panel, row=0, icon=self.mq_drop_icon, title="Drag & drop an image here",
+            hint="or click to browse", on_drop=self.on_marquee_drop,
+            on_click=self.browse_marquee,
         )
-        self.mq_primary.pack()
-        self.mq_secondary = ctk.CTkLabel(inner, text="or click to browse", text_color=MUTED)
-        self.mq_secondary.pack(pady=(2, 0))
-        self._register_drop(
-            self.mq_drop,
-            (self.mq_drop, inner, self.mq_icon_label, self.mq_primary, self.mq_secondary),
-            self.on_marquee_drop, self.browse_marquee,
-        )
-        self._make_labels_wrap(self.mq_drop, (self.mq_primary, self.mq_secondary))
+        self.mq_drop = dz["zone"]
+        self.mq_icon_label = dz["icon"]
+        self.mq_primary = dz["primary"]
+        self.mq_secondary = dz["secondary"]
 
-        card = ctk.CTkFrame(panel, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
         card.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 12))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
@@ -1720,39 +1945,24 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         panel = ctk.CTkFrame(parent, fg_color="transparent")
         panel.grid_columnconfigure(0, weight=1)
 
-        self.up_drop = ctk.CTkFrame(
-            panel, height=200, corner_radius=14, border_width=2, border_color=DROP_BORDER
-        )
-        self.up_drop.grid(row=0, column=0, sticky="ew", padx=24, pady=(4, 14))
-        self.up_drop.grid_propagate(False)
-        self.up_drop.grid_columnconfigure(0, weight=1)
-        self.up_drop.grid_rowconfigure(0, weight=1)
-        inner = ctk.CTkFrame(self.up_drop, fg_color="transparent")
-        inner.grid(row=0, column=0)
         self.up_drop_icon = self._ui_icon("sparkles", 46, light=RED, dark=RED_BRIGHT)
-        self.up_icon_label = ctk.CTkLabel(inner, text="", image=self.up_drop_icon)
-        self.up_icon_label.pack(pady=(0, 8))
-        self.up_primary = ctk.CTkLabel(
-            inner, text="Drag & drop a low-res image here",
-            font=self._font(16, "semibold"),
+        dz = self._build_drop_zone(
+            panel, row=0, icon=self.up_drop_icon,
+            title="Drag & drop a low-res image here",
+            hint="or click to browse  ·  JPG · PNG · WEBP · BMP · GIF · TIFF",
+            on_drop=self.on_upscale_drop, on_click=self.browse_upscale,
         )
-        self.up_primary.pack()
-        self.up_secondary = ctk.CTkLabel(
-            inner, text="or click to browse  ·  JPG · PNG · WEBP", text_color=MUTED)
-        self.up_secondary.pack(pady=(2, 0))
-        self._register_drop(
-            self.up_drop,
-            (self.up_drop, inner, self.up_icon_label, self.up_primary, self.up_secondary),
-            self.on_upscale_drop, self.browse_upscale,
-        )
-        self._make_labels_wrap(self.up_drop, (self.up_primary, self.up_secondary))
+        self.up_drop = dz["zone"]
+        self.up_icon_label = dz["icon"]
+        self.up_primary = dz["primary"]
+        self.up_secondary = dz["secondary"]
 
-        card = ctk.CTkFrame(panel, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        card = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
         card.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 12))
         card.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             card, text="AI super-resolution (Real-ESRGAN) for clean, sharp detail, then "
-                       "fit to the exact resolution with letterboxing.",
+                       "fit to the exact resolution — pad with bars, or crop to fill.",
             text_color=MUTED, anchor="w", justify="left", wraplength=620,
         ).grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 8))
 
@@ -1773,7 +1983,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.up_model_caption.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 10))
 
-        # target resolution selector
+        # target resolution + fit selectors
         res = ctk.CTkFrame(card, fg_color="transparent")
         res.grid(row=3, column=0, sticky="w", padx=18, pady=(0, 12))
         ctk.CTkLabel(res, text="TARGET", font=self._font(11, "medium"),
@@ -1784,6 +1994,14 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.up_target.set(DEFAULT_TARGET)
         self.up_target.grid(row=0, column=1)
+        ctk.CTkLabel(res, text="FIT", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=2, padx=(18, 12))
+        self.up_fit = ctk.CTkSegmentedButton(
+            res, values=list(self.UPSCALE_FITS),
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.up_fit.set("Pad")
+        self.up_fit.grid(row=0, column=3)
 
         self.up_btn = ctk.CTkButton(
             card, text=" Upscale Image", height=46,
@@ -1806,6 +2024,37 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         return panel
 
     # ---- marquee actions ------------------------------------------------- #
+    def _set_image_file(self, path: Path, *, icon_label, default_icon, primary,
+                        secondary, button, status, detail: str,
+                        ready_text: str) -> Path | None:
+        """Shared validation/preview for the image tools (path must exist).
+
+        Returns the path if it's a usable image, else None — the labels,
+        button state and status are updated either way.
+        """
+        ext = detect_format(path)
+        primary.configure(text=path.name)
+        if ext not in IMAGE_EXTS:
+            if default_icon is not None:
+                icon_label.configure(image=default_icon)
+            secondary.configure(text="Not an image  ·  click to choose another")
+            button.configure(state="disabled")
+            status.configure(
+                text=f"Unsupported file: .{ext or '?'} — pick an image.", text_color=WARNING)
+            return None
+        ft_icon = self._filetype_icon(ext, 52)
+        if ft_icon is not None:
+            icon_label.configure(image=ft_icon)
+        secondary.configure(text=f"{detail}  ·  click to choose another")
+        button.configure(state="normal")
+        status.configure(text=ready_text, text_color=MUTED)
+        return path
+
+    _IMAGE_FILETYPES = [
+        ("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tiff *.tif"),
+        ("All files", "*.*"),
+    ]
+
     def _on_mq_model_change(self, tier: str):
         blurb = BG_MODELS.get(tier, ("", ""))[1]
         self.mq_model_caption.configure(text=blurb)
@@ -1816,47 +2065,33 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.set_marquee_file(paths[0])
 
     def browse_marquee(self):
-        path = filedialog.askopenfilename(
-            title="Select an image",
-            filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tiff"),
-                       ("All files", "*.*")],
-        )
+        path = self._ask_open("marquee", title="Select an image",
+                              filetypes=self._IMAGE_FILETYPES)
         if path:
             self.set_marquee_file(Path(path))
 
     def set_marquee_file(self, path: Path):
         if not path.is_file():
-            self.mq_status.configure(text="Please drop a single image.", text_color=WARNING)
+            self.mq_status.configure(text=self._not_a_file_message(path), text_color=WARNING)
             return
-        ext = detect_format(path)
-        self.mq_primary.configure(text=path.name)
-        if ext not in IMAGE_EXTS:
-            self.marquee_file = None
-            if self.mq_drop_icon is not None:
-                self.mq_icon_label.configure(image=self.mq_drop_icon)
-            self.mq_secondary.configure(text="Not an image  ·  click to choose another")
-            self.mq_btn.configure(state="disabled")
-            self.mq_status.configure(
-                text=f"Unsupported file: .{ext or '?'} — pick an image.", text_color=WARNING)
-            return
-        self.marquee_file = path
         try:
             size = human_size(path.stat().st_size)
         except OSError:
             size = "?"
-        ft_icon = self._filetype_icon(ext, 52)
-        if ft_icon is not None:
-            self.mq_icon_label.configure(image=ft_icon)
-        self.mq_secondary.configure(text=f"Image  ·  {size}  ·  click to choose another")
-        self.mq_btn.configure(state="normal")
-        self.mq_status.configure(
-            text=f"Ready to remove the background from {path.name}", text_color=MUTED)
+        self.marquee_file = self._set_image_file(
+            path, icon_label=self.mq_icon_label, default_icon=self.mq_drop_icon,
+            primary=self.mq_primary, secondary=self.mq_secondary,
+            button=self.mq_btn, status=self.mq_status,
+            detail=f"Image  ·  {size}",
+            ready_text=f"Ready to remove the background from {path.name}",
+        )
 
     def on_marquee_remove(self):
         src = self.marquee_file
         if not src:
             return
-        out = filedialog.asksaveasfilename(
+        out = self._ask_save(
+            "marquee_save",
             title="Save transparent PNG as",
             defaultextension=".png",
             initialfile=f"{src.stem}_no-bg.png",
@@ -1868,6 +2103,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             return
         tier = self.mq_model.get() or DEFAULT_BG_TIER
         model = BG_MODELS.get(tier, BG_MODELS[DEFAULT_BG_TIER])[0]
+        self._job_started()
         self.mq_btn.configure(state="disabled")
         self.mq_progress.grid()
         self._mq_fill_start()
@@ -1882,7 +2118,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _marquee_worker(self, src: Path, out: Path, model: str):
         try:
-            result = remove_background(src, out, model)
+            # overwrite=True: the save dialog already confirmed replacing `out`.
+            result = remove_background(src, out, model, overwrite=True)
             self.after(0, self._marquee_done, src, result, None)
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
@@ -1890,17 +2127,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def _marquee_done(self, src: Path, out: Path | None, error: Exception | None):
         self._mq_fill_stop()
-        if not error:
-            self.mq_progress.set(1.0)  # snap the fill to full on success
-        self.mq_progress.grid_remove()
-        self.mq_progress.set(0)
-        self.mq_btn.configure(state="normal")
-        if error:
-            self.mq_status.configure(text=f"✕  {error}", text_color=ERROR)
-            self.add_history(src, None, False, error)
-        else:
-            self.mq_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
-            self.add_history(src, out, True)
+        self._job_done(status_label=self.mq_status, progress_bar=self.mq_progress,
+                       button=self.mq_btn, src=src, out=out, error=error)
 
     # ---- marquee: eased fill (rembg has no real progress signal) ---------- #
     def _mq_fill_start(self):
@@ -1924,6 +2152,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self._mq_fill_after = None
 
     # ---- marquee: upscaler actions --------------------------------------- #
+    UPSCALE_FITS = {"Pad": "letterbox", "Crop": "crop"}  # label -> upscale_image fit
+
     def _on_up_model_change(self, tier: str):
         self.up_model_caption.configure(text=UPSCALE_MODELS.get(tier, ("", "", ""))[2])
 
@@ -1933,30 +2163,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.set_upscale_file(paths[0])
 
     def browse_upscale(self):
-        path = filedialog.askopenfilename(
-            title="Select an image to upscale",
-            filetypes=[("Images", "*.png *.jpg *.jpeg *.webp *.bmp *.gif *.tiff"),
-                       ("All files", "*.*")],
-        )
+        path = self._ask_open("upscale", title="Select an image to upscale",
+                              filetypes=self._IMAGE_FILETYPES)
         if path:
             self.set_upscale_file(Path(path))
 
     def set_upscale_file(self, path: Path):
         if not path.is_file():
-            self.up_status.configure(text="Please drop a single image.", text_color=WARNING)
+            self.up_status.configure(text=self._not_a_file_message(path), text_color=WARNING)
             return
-        ext = detect_format(path)
-        self.up_primary.configure(text=path.name)
-        if ext not in IMAGE_EXTS:
-            self.upscale_file = None
-            if self.up_drop_icon is not None:
-                self.up_icon_label.configure(image=self.up_drop_icon)
-            self.up_secondary.configure(text="Not an image  ·  click to choose another")
-            self.up_btn.configure(state="disabled")
-            self.up_status.configure(
-                text=f"Unsupported file: .{ext or '?'} — pick an image.", text_color=WARNING)
-            return
-        self.upscale_file = path
         dims = "?"
         try:
             from PIL import Image
@@ -1965,12 +2180,13 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                 dims = f"{im.width}×{im.height}"
         except Exception:  # noqa: BLE001
             pass
-        ft_icon = self._filetype_icon(ext, 52)
-        if ft_icon is not None:
-            self.up_icon_label.configure(image=ft_icon)
-        self.up_secondary.configure(text=f"{dims} source  ·  click to choose another")
-        self.up_btn.configure(state="normal")
-        self.up_status.configure(text=f"Ready to upscale {path.name}", text_color=MUTED)
+        self.upscale_file = self._set_image_file(
+            path, icon_label=self.up_icon_label, default_icon=self.up_drop_icon,
+            primary=self.up_primary, secondary=self.up_secondary,
+            button=self.up_btn, status=self.up_status,
+            detail=f"{dims} source",
+            ready_text=f"Ready to upscale {path.name}",
+        )
 
     def on_upscale_run(self):
         src = self.upscale_file
@@ -1978,7 +2194,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             return
         target = self.up_target.get() or DEFAULT_TARGET
         tier = self.up_model.get() or DEFAULT_UPSCALE_TIER
-        out = filedialog.asksaveasfilename(
+        fit = self.UPSCALE_FITS.get(self.up_fit.get(), "letterbox")
+        out = self._ask_save(
+            "upscale_save",
             title="Save upscaled image as",
             defaultextension=".png",
             initialfile=f"{src.stem}_{target}.png",
@@ -1989,6 +2207,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.up_status.configure(
                 text="Cancelled (no save location chosen).", text_color=MUTED)
             return
+        self._job_started()
         self.up_btn.configure(state="disabled")
         self.up_progress.grid()
         self.up_progress.configure(mode="determinate")
@@ -2000,15 +2219,18 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             text_color=MUTED,
         )
         threading.Thread(
-            target=self._upscale_worker, args=(src, Path(out), target, tier), daemon=True
+            target=self._upscale_worker, args=(src, Path(out), target, tier, fit),
+            daemon=True,
         ).start()
 
-    def _upscale_worker(self, src: Path, out: Path, target: str, tier: str):
+    def _upscale_worker(self, src: Path, out: Path, target: str, tier: str, fit: str):
         def on_progress(frac: float):
             self.after(0, self._set_up_progress, frac, target, tier)
 
         try:
-            result = upscale_image(src, out, target, tier, progress=on_progress)
+            # overwrite=True: the save dialog already confirmed replacing `out`.
+            result = upscale_image(src, out, target, tier, fit=fit,
+                                   progress=on_progress, overwrite=True)
             self.after(0, self._upscale_done, src, result, None)
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
@@ -2021,17 +2243,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             text=f"Upscaling to {target} with {tier}…  {int(frac * 100)}%", text_color=MUTED)
 
     def _upscale_done(self, src: Path, out: Path | None, error: Exception | None):
-        if not error:
-            self.up_progress.set(1.0)  # snap to full on success
-        self.up_progress.grid_remove()
-        self.up_progress.set(0)
-        self.up_btn.configure(state="normal")
-        if error:
-            self.up_status.configure(text=f"✕  {error}", text_color=ERROR)
-            self.add_history(src, None, False, error)
-        else:
-            self.up_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
-            self.add_history(src, out, True)
+        self._job_done(status_label=self.up_status, progress_bar=self.up_progress,
+                       button=self.up_btn, src=src, out=out, error=error)
 
     # ===================================================================== #
     # Vanguard — AI Text Detector
@@ -2046,7 +2259,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
 
         # ---- input card: paste text or upload a document ----
-        incard = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        incard = ctk.CTkFrame(frame, fg_color=CARD_SOFT, corner_radius=12)
         incard.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 10))
         incard.grid_columnconfigure(0, weight=1)
 
@@ -2067,10 +2280,17 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vg_input = ctk.CTkTextbox(incard, height=170, wrap="word",
                                        border_width=1, border_color=DROP_BORDER)
         self.vg_input.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 6))
-        # Drag a file onto the box to load its text (no click-to-browse — it's editable).
+        # Drag a file onto the box to load its text (no click-to-browse — it's
+        # editable). Highlight the border on hover like every other drop zone.
         try:
             self.vg_input.drop_target_register(DND_FILES)
             self.vg_input.dnd_bind("<<Drop>>", self.on_vanguard_drop)
+            self.vg_input.dnd_bind(
+                "<<DropEnter>>",
+                lambda _e: self.vg_input.configure(border_color=RED_BRIGHT))
+            self.vg_input.dnd_bind(
+                "<<DropLeave>>",
+                lambda _e: self.vg_input.configure(border_color=DROP_BORDER))
         except Exception as exc:  # noqa: BLE001
             print("Vanguard drag & drop registration failed:", exc)
         self.vg_source = ctk.CTkLabel(incard, text="Nothing loaded — type, paste, or drop a file.",
@@ -2102,7 +2322,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vg_progress.grid_remove()  # only while analysing
 
         # ---- results card (hidden until a run finishes) ----
-        self.vg_results = ctk.CTkFrame(frame, fg_color=("#DFD9DA", "#2B2629"), corner_radius=12)
+        self.vg_results = ctk.CTkFrame(frame, fg_color=CARD_SOFT, corner_radius=12)
         self.vg_results.grid(row=4, column=0, sticky="nsew", padx=24, pady=(0, 8))
         self.vg_results.grid_columnconfigure(0, weight=1)
         self.vg_results.grid_rowconfigure(2, weight=1)
@@ -2128,6 +2348,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vg_out = ctk.CTkTextbox(self.vg_results, height=200, wrap="word")
         self.vg_out.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 6))
         self.vg_out.configure(state="disabled")
+        # The underlying tk.Text — CTkTextbox has no tag API, so highlighting
+        # must reach through. Centralised here so it's one private access.
+        self.vg_out_text = self.vg_out._textbox  # noqa: SLF001
 
         self.vg_disclaimer = ctk.CTkLabel(
             self.vg_results,
@@ -2172,7 +2395,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.set_vanguard_file(paths[0])
 
     def browse_vanguard(self):
-        path = filedialog.askopenfilename(
+        path = self._ask_open(
+            "vanguard",
             title="Select a .txt / .docx / .pdf",
             filetypes=[("Documents", "*.txt *.docx *.pdf"), ("All files", "*.*")],
         )
@@ -2181,7 +2405,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def set_vanguard_file(self, path: Path):
         if not path.is_file():
-            self.vg_source.configure(text="Please drop a single file.", text_color=WARNING)
+            self.vg_source.configure(text=self._not_a_file_message(path), text_color=WARNING)
             return
         ext = detect_format(path)
         if ext not in ("txt", "docx", "pdf"):
@@ -2189,10 +2413,33 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                 text=f"Unsupported: .{ext or '?'} — use .txt, .docx, or .pdf.",
                 text_color=WARNING)
             return
+        # Extract on a worker thread — a large PDF takes seconds to minutes and
+        # would freeze the whole window if read here on the UI thread.
+        run = self._vg_run
+        self.vg_upload_btn.configure(state="disabled")
+        self.vg_btn.configure(state="disabled")
+        self.vg_source.configure(text=f"Loading {path.name}…", text_color=MUTED)
+        threading.Thread(
+            target=self._vg_load_worker, args=(path, run), daemon=True
+        ).start()
+
+    def _vg_load_worker(self, path: Path, run: int):
         try:
             text = extract_document_text(path)
+            self.after(0, self._vg_load_done, path, text, None, run)
         except Exception as exc:  # noqa: BLE001
-            self.vg_source.configure(text=f"Couldn't read {path.name}: {exc}", text_color=ERROR)
+            traceback.print_exc()
+            self.after(0, self._vg_load_done, path, None, exc, run)
+
+    def _vg_load_done(self, path: Path, text: str | None,
+                      error: Exception | None, run: int):
+        self.vg_upload_btn.configure(state="normal")
+        if run != self._vg_run:
+            return  # the user reset (or started a detect) while this loaded
+        self.vg_btn.configure(state="normal")
+        if error:
+            self.vg_source.configure(text=f"Couldn't read {path.name}: {error}",
+                                     text_color=ERROR)
             return
         self.vanguard_file = path
         self.vg_input.delete("1.0", "end")
@@ -2202,6 +2449,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
 
     def reset_vanguard(self):
         """Clear input, results, highlights and score — back to the initial state."""
+        self._vg_run += 1  # invalidate any in-flight load/detect worker
+        self._job_finished_if_vg_running()
         self.vanguard_file = None
         self.vg_input.delete("1.0", "end")
         self.vg_source.configure(
@@ -2211,13 +2460,20 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vg_score.configure(text="—", text_color=TEXT)
         self.vg_chip.configure(text="", fg_color="transparent")
         self.vg_out.configure(state="normal")
-        self.vg_out._textbox.delete("1.0", "end")
+        self.vg_out_text.delete("1.0", "end")
         self.vg_out.configure(state="disabled")
-        # reset progress + status + button
+        # reset progress + status + buttons
         self.vg_progress.grid_remove()
         self.vg_progress.set(0)
         self.vg_btn.configure(state="normal")
+        self.vg_upload_btn.configure(state="normal")
         self.vg_status.configure(text="Paste or upload text, then Detect.", text_color=MUTED)
+
+    def _job_finished_if_vg_running(self):
+        """Reset abandons a running detect; release its slot in the close guard."""
+        if getattr(self, "_vg_detecting", False):
+            self._vg_detecting = False
+            self._job_finished()
 
     def on_vanguard_detect(self):
         text = self.vg_input.get("1.0", "end").strip()
@@ -2225,6 +2481,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.vg_status.configure(
                 text="Please enter or upload some text first.", text_color=WARNING)
             return
+        self._vg_run += 1
+        run = self._vg_run
+        self._vg_detecting = True
+        self._job_started()
         self.vg_btn.configure(state="disabled")
         self.vg_progress.grid()
         self.vg_progress.configure(mode="determinate")
@@ -2233,25 +2493,30 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             text="Analysing… (loading the detector model — the first run after launch "
                  "is slower).",
             text_color=MUTED)
-        threading.Thread(target=self._vanguard_worker, args=(text,), daemon=True).start()
+        threading.Thread(target=self._vanguard_worker, args=(text, run), daemon=True).start()
 
-    def _vanguard_worker(self, text: str):
+    def _vanguard_worker(self, text: str, run: int):
         def on_progress(frac: float):
-            self.after(0, self._set_vg_progress, frac)
+            self.after(0, self._set_vg_progress, frac, run)
 
         try:
             result = detect_ai_text(text, is_file=False, progress=on_progress)
-            self.after(0, self._vanguard_done, result, None)
+            self.after(0, self._vanguard_done, result, None, run)
         except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
-            self.after(0, self._vanguard_done, None, exc)
+            self.after(0, self._vanguard_done, None, exc, run)
 
-    def _set_vg_progress(self, frac: float):
+    def _set_vg_progress(self, frac: float, run: int):
+        if run != self._vg_run:
+            return  # stale: the user reset while the worker was running
         self.vg_progress.set(max(0.0, min(1.0, frac)))
         self.vg_status.configure(text=f"Analysing…  {int(frac * 100)}%", text_color=MUTED)
 
-    def _vanguard_done(self, result: dict | None, error: Exception | None):
-        self.vg_progress.set(1.0 if not error else 0)
+    def _vanguard_done(self, result: dict | None, error: Exception | None, run: int):
+        if run != self._vg_run:
+            return  # stale: Reset already cleaned up the UI (and the job slot)
+        self._vg_detecting = False
+        self._job_finished()
         self.vg_progress.grid_remove()
         self.vg_progress.set(0)
         self.vg_btn.configure(state="normal")
@@ -2261,21 +2526,32 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._render_vanguard_result(result)
 
     def _render_vanguard_result(self, result: dict):
+        import bisect
+
         score, tier = result["score"], result["tier"]
         color = self._vg_tier_text(tier)
         self.vg_score.configure(text=f"{score}%", text_color=color)
         self.vg_chip.configure(text=f"  {tier}  ", fg_color=self._vg_tier_chip(tier))
 
-        box = self.vg_out._textbox  # underlying tk.Text for tag-based highlighting
+        text = result["text"]
+        # Tcl 8.6 stores astral-plane chars (emoji etc.) as surrogate pairs, so a
+        # tk Text "chars" offset counts them as 2 — convert Python offsets.
+        astral = [i for i, ch in enumerate(text) if ord(ch) > 0xFFFF]
+
+        def tk_off(i: int) -> int:
+            return i + bisect.bisect_left(astral, i)
+
+        box = self.vg_out_text  # underlying tk.Text for tag-based highlighting
         self.vg_out.configure(state="normal")
         box.delete("1.0", "end")
-        box.insert("1.0", result["text"])
+        box.insert("1.0", text)
         box.tag_config("ai", background="#C0392B", foreground="#FFFFFF")
         flagged = 0
         for sp in result["spans"]:
             if sp["p_ai"] >= FLAG_THRESHOLD:
                 flagged += 1
-                box.tag_add("ai", f"1.0 + {sp['start']} chars", f"1.0 + {sp['end']} chars")
+                box.tag_add("ai", f"1.0 + {tk_off(sp['start'])} chars",
+                            f"1.0 + {tk_off(sp['end'])} chars")
         self.vg_out.configure(state="disabled")
 
         self.vg_results.grid()
@@ -2300,8 +2576,9 @@ def _run_cli(args) -> int:
         help="Download URL as FORMAT (mp3/mp4) into the current folder and exit.",
     )
     parser.add_argument(
-        "--remove-bg", metavar="FILE",
-        help="Remove FILE's background, save a transparent PNG next to it, and exit.",
+        "--remove-bg", nargs="+", metavar="FILE [TIER]",
+        help="Remove FILE's background (TIER: Flash/Mid/Omega, default Mid), "
+             "save a transparent PNG next to it, and exit.",
     )
     parser.add_argument(
         "--upscale", nargs="+", metavar="FILE [TARGET]",
@@ -2331,14 +2608,22 @@ def _run_cli(args) -> int:
             print(f"Error: {exc}", file=sys.stderr)
             return 1
     if ns.remove_bg:
+        if len(ns.remove_bg) > 2:
+            parser.error("--remove-bg takes FILE and an optional TIER (Flash/Mid/Omega)")
+        src = ns.remove_bg[0]
+        tier = ns.remove_bg[1].title() if len(ns.remove_bg) > 1 else DEFAULT_BG_TIER
+        if tier not in BG_MODELS:
+            parser.error(f"unknown tier '{tier}' — use one of: {', '.join(BG_MODELS)}")
         try:
-            out = remove_background(ns.remove_bg)
+            out = remove_background(src, model=BG_MODELS[tier][0])
             print(f"Saved: {out}")
             return 0
         except Exception as exc:  # noqa: BLE001
             print(f"Error: {exc}", file=sys.stderr)
             return 1
     if ns.upscale:
+        if len(ns.upscale) > 2:
+            parser.error("--upscale takes FILE and an optional TARGET (1080p/2K/4K)")
         src = ns.upscale[0]
         target = ns.upscale[1] if len(ns.upscale) > 1 else DEFAULT_TARGET
         try:
@@ -2361,10 +2646,17 @@ def _run_cli(args) -> int:
 
 
 def main():
+    _setup_frozen_logging()  # windowed exe: give print()/tracebacks a log file
     # If launched with flags (e.g. --convert), run headless; otherwise open the GUI.
     if len(sys.argv) > 1 and sys.argv[1].startswith("-"):
         sys.exit(_run_cli(sys.argv[1:]))
-    App().mainloop()
+    app = App()
+    # A bare file argument (e.g. a file dragged onto the exe) preloads the Converter.
+    if len(sys.argv) > 1:
+        path = Path(sys.argv[1])
+        if path.is_file():
+            app.set_file(path)
+    app.mainloop()
 
 
 if __name__ == "__main__":

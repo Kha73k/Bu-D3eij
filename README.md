@@ -144,7 +144,7 @@ The **Recent** tab lists past conversions (stored in
 - **Audio/video** conversions need ffmpeg installed and on your PATH; if it
   is missing the app shows a clear message instead of failing silently.
 - **DOCX → PDF** gives the best results when Microsoft Word is installed
-  (via `docx2pdf`); otherwise it produces a text-only PDF with `reportlab`.
+  (via COM); otherwise it produces a text-only PDF with `reportlab`.
 - **PPTX → PDF** gives the best results when Microsoft PowerPoint is installed
   (via COM); otherwise it produces a text-only PDF with `reportlab`.
 - **PDF → DOCX** uses `pdf2docx` for layout-aware conversion. Very complex
@@ -153,10 +153,11 @@ The **Recent** tab lists past conversions (stored in
   (headings, bold, lists, tables) but is plain Markdown — images are not
   embedded, and very complex layouts may simplify.
 - Image conversions to formats without transparency (JPG, BMP) flatten any
-  alpha channel to RGB. For animated GIFs, the first frame is used.
+  alpha channel to RGB. Animated GIFs keep their animation when converting to
+  WEBP/TIFF/PNG; converting to a still format uses the first frame.
 
 ## Tech stack
 
 Python 3.11 · customtkinter · tkinterdnd2 · Pillow · python-docx ·
-pdfplumber · reportlab · pdf2docx · docx2pdf · python-pptx ·
+pdfplumber · reportlab · pdf2docx · python-pptx ·
 pymupdf4llm · mammoth · markdownify · yt-dlp · ffmpeg-python

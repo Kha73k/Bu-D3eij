@@ -20,13 +20,21 @@ DEFAULT_BG_TIER = "Mid"
 _REMBG_SESSIONS: dict = {}
 
 
-def remove_background(src, out_path=None, model: str = "isnet-general-use") -> Path:
+def unload_models() -> None:
+    """Drop all cached rembg sessions so their memory can be reclaimed."""
+    _REMBG_SESSIONS.clear()
+
+
+def remove_background(src, out_path=None, model: str = "isnet-general-use",
+                      overwrite: bool = False) -> Path:
     """Remove an image's background and save a transparent PNG; return its path.
 
     `model` is a rembg model name (see `BG_MODELS` for the Marquee tiers:
     `u2netp` / `isnet-general-use` / `birefnet-general`). `src` must be an image;
     the output is always saved as PNG (the only supported image format that
-    preserves transparency). Like `download_youtube`, this lives outside
+    preserves transparency). With `overwrite` an explicitly chosen `out_path` is
+    replaced (the GUI's save dialog already confirmed it); otherwise the path is
+    de-duplicated with ` (n)`. Like `download_youtube`, this lives outside
     `convert_file`/`CONVERSIONS` — it has no target format to choose.
     """
     from PIL import Image
@@ -51,6 +59,7 @@ def remove_background(src, out_path=None, model: str = "isnet-general-use") -> P
     out = Path(out_path) if out_path else src.with_name(f"{src.stem}_no-bg.png")
     if out.suffix.lower() != ".png":
         out = out.with_suffix(".png")  # transparency requires PNG
-    out = unique_path(out)             # never clobber an existing file
+    if not (overwrite and out_path):
+        out = unique_path(out)  # auto-named output never clobbers a file
     result.save(out, "PNG")
     return out

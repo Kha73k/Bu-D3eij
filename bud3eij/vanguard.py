@@ -22,6 +22,7 @@ import re
 import sys
 from pathlib import Path
 
+from .converters import _read_text
 from .formats import ConversionError
 
 # The detector files live next to the other models, in their own subfolder.
@@ -59,6 +60,14 @@ _TOKENIZER = None     # tokenizers.Tokenizer (loaded once)
 _INPUT_NAMES: set[str] = set()
 
 
+def unload_models() -> None:
+    """Drop the cached detector session/tokenizer (~2 GB RAM) for reclamation."""
+    global _SESSION, _TOKENIZER, _INPUT_NAMES
+    _SESSION = None
+    _TOKENIZER = None
+    _INPUT_NAMES = set()
+
+
 def tier_for(score: int) -> str:
     """Map a 0-100 score to a CONFIDENCE_TIERS label."""
     for upper, label in CONFIDENCE_TIERS:
@@ -75,7 +84,9 @@ def extract_document_text(path) -> str:
     path = Path(path)
     ext = path.suffix.lower().lstrip(".")
     if ext == "txt":
-        return path.read_text(encoding="utf-8", errors="replace")
+        # Same utf-8 -> cp1252 fallback as the converters, so the same file
+        # yields the same text in both places.
+        return _read_text(path)
     if ext == "docx":
         import docx  # lazy
 
@@ -137,13 +148,19 @@ def _tokenizer():
     return _TOKENIZER
 
 
-def _score_chunks(chunks: list[str], progress=None) -> list[float]:
-    """Return P(AI) in [0,1] for each chunk, scored in bounded batches."""
+def _score_chunks(chunks: list[str], progress=None) -> tuple[list[float], list[int]]:
+    """Return (P(AI) in [0,1], scored-token count) for each chunk, in batches.
+
+    The token counts reflect truncation at _MAX_TOKENS, so callers can weight the
+    overall score by what was actually *scored* (a merged mega-chunk on a huge doc
+    is truncated; weighting it by its full character length would skew the mean).
+    """
     import numpy as np
 
     session = _session()
     tok = _tokenizer()
     probs: list[float] = []
+    tokens: list[int] = []
     total = max(1, len(chunks))
     for start in range(0, len(chunks), _BATCH):
         batch = chunks[start:start + _BATCH]
@@ -155,9 +172,10 @@ def _score_chunks(chunks: list[str], progress=None) -> list[float]:
         feed = {k: v for k, v in feed.items() if k in _INPUT_NAMES}
         logits = session.run(None, feed)[0].reshape(-1)
         probs.extend((1.0 / (1.0 + np.exp(-logits))).tolist())
+        tokens.extend(int(m.sum()) for m in mask)
         if progress:
             progress(min(1.0, (start + len(batch)) / total))
-    return probs
+    return probs, tokens
 
 
 # --------------------------------------------------------------------------- #
@@ -206,14 +224,15 @@ def detect_ai_text(source, *, is_file: bool = False, progress=None) -> dict:
     chunk_texts = [text[s:e] for s, e in spans]
 
     try:
-        probs = _score_chunks(chunk_texts, progress=progress)
+        probs, tokens = _score_chunks(chunk_texts, progress=progress)
     except ConversionError:
         raise
     except Exception as exc:  # noqa: BLE001
         raise ConversionError(f"AI text detection failed: {exc}") from exc
 
-    # Length-weighted mean so long docs and short paragraphs both behave sensibly.
-    weights = [max(1, e - s) for s, e in spans]
+    # Weight by the tokens actually scored (truncation-aware), so a merged
+    # mega-chunk on a huge document can't dominate the mean with unscored text.
+    weights = [max(1, t) for t in tokens]
     overall = sum(p * w for p, w in zip(probs, weights)) / max(1, sum(weights))
     score = int(round(overall * 100))
 

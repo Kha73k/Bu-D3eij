@@ -15,6 +15,8 @@ was split into the package in **v2.2** — same single program and same UI/outpu
 reorganized for safe growth before the image-editing section expands.)
 **v2.0** opens a second direction — an image-editing area called **Marquee**;
 its first tool is a **Background Remover** (rembg) that exports a transparent PNG.
+**v3.1** was a full audit-fix pass (no new direction): COM safety, thread-race
+fixes, shared panel helpers, and an in-repo `tests/` suite — details inline below.
 
 ## Environment (important)
 - **Runtime is the Python 3.11 venv at `.venv`** — always use it:
@@ -26,8 +28,10 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
   It is on the **user PATH for newly-opened terminals only**. An agent shell
   started before the install will NOT see it, so for A/V work prepend that
   `bin` to `$env:PATH`, or `shutil.which("ffmpeg")` returns None.
-- **Microsoft Word is installed**, so DOCX→PDF uses the high-fidelity
-  `docx2pdf` (Word/COM) path; `reportlab` is the text-only fallback.
+- **Microsoft Word is installed**, so DOCX→PDF uses a high-fidelity **direct
+  Word-COM** path (`_docx_to_pdf_word`; docx2pdf was dropped in v3.1 — it leaked
+  a hidden WINWORD.EXE on every failed conversion); `reportlab` is the
+  text-only fallback.
 - **Microsoft PowerPoint** (if installed) is used for PPTX→PDF via COM
   (`win32com.client` + `SaveAs(..., 32)`); `reportlab` is the text-only fallback.
 
@@ -89,8 +93,17 @@ its first tool is a **Background Remover** (rembg) that exports a transparent PN
 >   `--add-data "%USERPROFILE%\.u2net\u2net.onnx;u2net"` and point `U2NET_HOME` at
 >   that bundled dir before importing rembg.
 
-## Verifying changes (no formal test suite in repo yet)
-- **Conversions (headless):** `import app`, generate samples (PIL image,
+## Verifying changes
+- **In-repo test scripts (`tests/`, added v3.1):** plain scripts (no pytest) —
+  each prints OK/FAIL lines and exits non-zero on failure. Run with the venv
+  python: `tests\test_headless.py` (format model, conversions incl. animated
+  GIF, ffmpeg error truncation, upscaler fits/overwrite/SR-threshold,
+  bg-remover overwrite, vanguard scoring, history validation — loads the
+  Vanguard model, so the first run is slow), `tests\test_gui_smoke.py` (all
+  frames + the v3.1 widgets/counters), `tests\test_com_paths.py` (direct-Word
+  DOCX→PDF incl. the no-WINWORD-leak check, owned-PowerPoint PPTX→PDF; needs
+  Office installed).
+- **Conversions (headless, ad-hoc):** `import app`, generate samples (PIL image,
   reportlab PDF, python-docx DOCX, `wave` WAV, ffmpeg for MP4) in a temp dir,
   call `app.convert_file(src, target)`, and assert the output exists/opens.
   Run with the venv python; prepend the ffmpeg bin to PATH first.
@@ -123,6 +136,11 @@ still apply; only the file a function lives in changed.
 - **Dispatch:** `convert_file(src, target)` validates against `CONVERSIONS`,
   computes a non-clobbering output path with `unique_path()` (saves next to the
   source; never overwrites — adds ` (n)`), and routes to the right converter.
+  **`tif` is an input alias of `tiff`** (v3.1) — present in `IMAGE_EXTS`,
+  `CONVERSIONS`, `PILLOW_FORMAT`, and `EXT_ICON`.
+  **Overwrite exception (v3.1):** `remove_background`/`upscale_image` take
+  `overwrite=True`, used by the GUI when the path came from `asksaveasfilename`
+  (the dialog already confirmed replacing); auto-named outputs still never clobber.
 - **Converters:** `convert_image` (Pillow), `pdf_to_txt` (pdfplumber),
   `pdf_to_md` (pymupdf4llm, pdfplumber text fallback), `pdf_to_docx` (pdf2docx),
   `docx_to_txt` (python-docx), `docx_to_md` (mammoth→HTML + markdownify→MD),
@@ -132,14 +150,23 @@ still apply; only the file a function lives in changed.
   `pptx_to_md`/`pptx_to_txt` (python-pptx), `pptx_to_pdf`
   (`_pptx_to_pdf_powerpoint` COM → `_pptx_to_pdf_reportlab` fallback),
   `convert_av` (ffmpeg-python). Each **imports its heavy deps lazily** inside
-  the function for fast startup — keep this pattern.
+  the function for fast startup — keep this pattern. v3.1 details:
+  `_docx_to_pdf_word` is **direct Word COM** (see Conventions — never reintroduce
+  docx2pdf); `convert_image` keeps **animation** when source has `n_frames > 1`
+  and the target supports it (gif/webp/tiff/png → `save_all=True`); `convert_av`
+  prints the **full ffmpeg stderr** to stderr but raises only its last ~3 lines
+  (≤400 chars) so the GUI status label can't be flooded.
 - **YouTube download:** `download_youtube(url, fmt, out_dir, progress_hook)`
   (yt-dlp, lazy import) — `fmt` is `mp3` (FFmpegExtractAudio 192 kbps) or `mp4`
   (`bestvideo+bestaudio`, `merge_output_format=mp4`). Needs ffmpeg (sets
   `ffmpeg_location`). Not part of `convert_file` (it has no source file); the
   GUI **YouTube** page (`_build_youtube` + `on_youtube_download`/`_youtube_worker`/
   `_yt_hook`) and the `--download URL FORMAT` CLI both call it. Output folder is
-  asked per-download (filedialog); results go through `add_history`.
+  asked per-download (filedialog, remembers the last folder); results go through
+  `add_history`. v3.1: the mp4 path adds an **`FFmpegVideoRemuxer`** postprocessor
+  (`preferedformat` — yt-dlp's spelling) so a single-file webm-only download still
+  lands as `.mp4`; `_yt_hook` is **throttled to ≥100 ms** between UI posts
+  (yt-dlp fires per network block — unthrottled it floods the Tk event queue).
 - **Marquee = a multi-tool image-editing page (tool switcher added v2.3).**
   `_build_marquee` is now a shared `_section_header` + a `CTkSegmentedButton`
   (`self.mq_tool`: "Background Remover" / "Upscaler") + a container holding two
@@ -169,7 +196,9 @@ still apply; only the file a function lives in changed.
   callback, the bar is an **eased simulated fill** (`_mq_fill_start`/`_mq_fill_tick`/
   `_mq_fill_stop`): a timer creeps the bar toward ~90% while the worker runs and snaps
   it to 100% on success — a filling bar, not the old back-and-forth one. Nav icon
-  reuses the bundled `assets/ui/sparkles.png`.
+  reuses the bundled `assets/ui/sparkles.png`. v3.1: `remove_background` gained
+  `overwrite` (see Dispatch bullet) and `unload_models()` (clears
+  `_REMBG_SESSIONS`; wired to the Tools "Unload AI models" button).
 - **Marquee → Image Upscaler (v2.3):** `upscale_image(src, out_path=None,
   target="2K", model="Fast", fit="letterbox")` in `bud3eij/upscale.py` (lazy import)
   super-resolves a low-quality image with **Real-ESRGAN** on the already-bundled
@@ -196,6 +225,14 @@ still apply; only the file a function lives in changed.
   fraction back via `self.after(0, self._set_up_progress, …)`, which sets the bar and
   shows `Upscaling to <target> with <tier>…  N%`. (CPU SR is slow, esp. Max → 4K, so
   the live bar matters.) CLI: `--upscale FILE [TARGET]` (uses the Fast tier).
+  **v3.1 changes:** `UPSCALE_MODELS` values are now **4-tuples** `(filename, url,
+  blurb, sha256)` — the blurb stays at index 2; downloads stream via `urlopen`
+  with a **30 s socket timeout** and are **SHA-256-verified** (mismatch → delete +
+  clear error). `fit` is now real: `"letterbox"` (pad, default) or `"crop"`
+  (cover + center-trim), exposed as the **FIT** segmented (`self.up_fit`,
+  Pad/Crop via `App.UPSCALE_FITS`). SR is **skipped below `_SR_MIN_GAIN`
+  (1.25×)** — a full ×4 pass then a Lanczos *down*scale costs minutes + ~GB RAM
+  for a near-identical result. Also gained `overwrite` + `unload_models()`.
 - **Vanguard → AI Text Detector (v3.0):** `detect_ai_text(source, is_file=False,
   progress=None)` in `bud3eij/vanguard.py` (lazy import) estimates how likely text is
   AI-generated using **`desklib/ai-text-detector-v1.01`** (a DeBERTa-v3-large fine-tune,
@@ -205,7 +242,9 @@ still apply; only the file a function lives in changed.
   tokenizer). The text is split into ~3-sentence chunks (`_chunk_spans`, capped at
   `_MAX_CHUNKS=200` by merging more sentences on huge docs), **batch**-scored
   (`_score_chunks`, `_BATCH=8`) through sigmoid→P(AI); the **overall score** is a
-  length-weighted mean → `CONFIDENCE_TIERS` (Human / Likely Human / Uncertain / Likely AI
+  **scored-token-weighted** mean (v3.1 — `_score_chunks` returns `(probs, tokens)`;
+  char-length weights let truncated mega-chunks dominate with unscored text)
+  → `CONFIDENCE_TIERS` (Human / Likely Human / Uncertain / Likely AI
   / AI). Returns a GUI-agnostic dict (`score` 0-100, `tier`, per-chunk `spans` with char
   offsets + `p_ai`, `too_short`, `model`); chunks ≥ `FLAG_THRESHOLD=0.60` get highlighted.
   `extract_document_text` reads `.txt/.docx/.pdf` (same engines as `converters.py`).
@@ -232,19 +271,48 @@ still apply; only the file a function lives in changed.
   text clears WCAG AA in both modes). Handlers
   `on_vanguard_drop`/`browse_vanguard`/`set_vanguard_file`/`on_vanguard_detect`/
   `reset_vanguard`/`_vanguard_worker`/`_set_vg_progress`/`_vanguard_done`/
-  `_render_vanguard_result`. Nav icon `assets/ui/shield-check.png`. CLI: `--detect FILE`. **Detection is an estimate, NOT proof**
+  `_render_vanguard_result`. Nav icon `assets/ui/shield-check.png`. CLI: `--detect FILE`.
+  **v3.1 GUI hardening:** `set_vanguard_file` extracts on a **worker thread**
+  (`_vg_load_worker`/`_vg_load_done` — a big PDF used to freeze the whole window);
+  detect/reset are guarded by the **`self._vg_run` generation counter** (Reset
+  increments it; stale `_vanguard_done`/`_set_vg_progress` callbacks return
+  early instead of resurrecting results); highlight offsets get a surrogate-pair
+  correction (`tk_off` in `_render_vanguard_result`) because Tcl 8.6 counts
+  astral chars (emoji) as 2; the private `_textbox` access is centralised as
+  `self.vg_out_text`; `unload_models()` frees the ~2 GB session (Tools button).
+  **Detection is an estimate, NOT proof**
   — the UI says so; never phrase results as an accusation.
 - **GUI:** sidebar nav (Home, Converter, Recent, Batch Convert, YouTube,
   Marquee, Vanguard, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
   appearance toggle** (`_toggle_appearance`, `SUN_GLYPH`/`MOON_GLYPH` in
   "Segoe UI Symbol"), replacing the old Light/Dark/System dropdown. Each
   `_build_*` view starts with `_section_header(title, subtitle)`; controls sit in
-  rounded "cards"
-  (`fg_color=("#DFD9DA","#2B2629")`). Conversions run on a worker
+  rounded "cards" (`fg_color=CARD_SOFT` — the constant replaced the repeated
+  `("#DFD9DA","#2B2629")` literal in v3.1). Conversions run on a worker
   `threading.Thread`; UI updates are marshalled back with `self.after(0, ...)`
-  (Tkinter is not thread-safe). Drop zones are built with an inner frame of
-  labels (`drop_primary`/`drop_secondary`); `_register_drop(zone, widgets, ...)`
-  wires DnD + click + drag-hover border on every child widget.
+  (Tkinter is not thread-safe). Drop zones are built via the shared
+  **`_build_drop_zone(parent, row=…, icon=…, title=…, hint=…, on_drop=…,
+  on_click=…)`** helper (v3.1 — used by Converter, Batch, both Marquee panels;
+  returns `{"zone","icon","primary","secondary"}`), which wires
+  `_register_drop` (DnD + click + drag-hover border) and `_make_labels_wrap`.
+  **Use it for any new tool panel.** Other v3.1 shared plumbing — use these
+  rather than re-rolling per panel:
+  - **`_job_started()`/`_job_finished()`** around every worker, and
+    **`_job_done(status_label=…, progress_bar=…, button=…, src=…, out=…,
+    error=…)`** as the standard finish (hides progress, re-enables, sets ✓/✕
+    status, records history). `_on_close` (wired to `WM_DELETE_WINDOW`) warns
+    before quitting while `_active_jobs > 0`.
+  - **Generation counters** `self._convert_run`/`self._vg_run`: Clear/Reset
+    increments them; stale worker completions check and return early.
+  - **`_ask_open`/`_ask_open_multiple`/`_ask_save`/`_ask_dir(key, …)`** wrap the
+    filedialogs and remember the last folder per key (`self._last_dirs`).
+  - **`_set_image_file(...)`** is the shared image-validation/preview for the
+    Marquee panels; `_not_a_file_message(path)` words folder-vs-file drops.
+  - **`_setup_frozen_logging()`** (called in `main()`) tees stdout/stderr of the
+    windowed exe to `%LOCALAPPDATA%\Bu D3eij\app.log` so prints aren't lost.
+  - The Recent table only refreshes when it's the visible frame
+    (`self._current_frame`, set by `show_frame`); Tools stats refresh on show
+    (`_refresh_tools`); a bare file argument to the exe preloads the Converter.
 - **Animated Convert button (1.4.5):** the Converter's "Convert Now" is a custom
   `GradientButton(ctk.CTkFrame)` (defined just above `class App`), not a
   `CTkButton`. CustomTkinter has no CSS, so the whole button is **composed in
@@ -298,11 +366,16 @@ still apply; only the file a function lives in changed.
   (`load_history`/`save_history`, cap `MAX_HISTORY`). `add_history()` mutates the
   shared `self.history`, so off the main thread it must be called via
   `self.after(0, self.add_history, ...)` (both the single and batch paths do).
+  v3.1: `load_history` drops non-dict entries (one corrupt entry used to crash
+  `_recent_row` at startup); "Clear history" asks for confirmation.
 - **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT`,
-  `--download URL FORMAT` (mp3/mp4, saves to cwd), `--remove-bg FILE`
-  (transparent PNG next to the source), and `--upscale FILE [TARGET]`
-  (1080p/2K/4K, default 2K) run headless; no flags → GUI. All four double as the
-  way to smoke-test the frozen exe.
+  `--download URL FORMAT` (mp3/mp4, saves to cwd), `--remove-bg FILE [TIER]`
+  (transparent PNG next to the source; TIER = Flash/Mid/Omega, default Mid),
+  `--upscale FILE [TARGET]` (1080p/2K/4K, default 2K), and `--detect FILE` run
+  headless; extra positional args are rejected with a clear `parser.error`.
+  No flags → GUI; a **bare file argument** (e.g. a file dragged onto the exe)
+  opens the GUI with the Converter preloaded. All of these double as the way to
+  smoke-test the frozen exe.
 - **Branding/assets:** `resource_path()` resolves bundled files in dev and in
   the frozen exe (`sys._MEIPASS`). Window + exe icon = `AppLogo.ico`; in-app
   logo (sidebar header + Home banner) = `DashboardLogo.png` loaded via
@@ -334,10 +407,16 @@ still apply; only the file a function lives in changed.
   `TkinterDnD.DnDWrapper` and calls `TkinterDnD._require(self)` in `__init__`.
   Drop targets are registered on widgets via `_register_drop`; dropped paths
   are parsed with `self.tk.splitlist(event.data)` (handles `{spaced paths}`).
-- **docx2pdf** drives Word via COM → must `pythoncom.CoInitialize()` on the
-  worker thread (handled in `_docx_to_pdf_word`). **PPTX→PDF** does the same with
-  PowerPoint COM in `_pptx_to_pdf_powerpoint` (CoInitialize, `Presentations.Open`
-  with absolute paths + `WithWindow=False`, `SaveAs(out, 32)`, then `Quit`).
+- **Office COM (rules tightened in v3.1):** both paths `pythoncom.CoInitialize()`
+  on the worker thread. `_docx_to_pdf_word` drives Word **directly**:
+  `DisplayAlerts = 0`, `Documents.Open` → `SaveAs(FileFormat=17)` →
+  `doc.Close(0)` in a `finally`, `word.Quit()` in a `finally` — Word is
+  **multi-instance** COM, so Dispatch always creates our own instance and Quit
+  is safe. `_pptx_to_pdf_powerpoint` is the opposite case: **PowerPoint is
+  single-instance** COM — `Dispatch` attaches to a running PowerPoint and
+  `Quit()` would close the user's open presentations — so it tries
+  `GetActiveObject` first and only Quits when it `owned` (started) the
+  instance. Preserve both patterns when touching these.
 - **Markdown converters:** `pdf_to_md` uses pymupdf4llm (rides on the bundled
   PyMuPDF) and falls back to pdfplumber text; `docx_to_md` goes DOCX→HTML
   (mammoth) → MD (markdownify); `pptx_to_md` builds MD by hand from python-pptx
@@ -346,8 +425,9 @@ still apply; only the file a function lives in changed.
 - **ffmpeg-python:** use real ffmpeg flag names as kwargs (e.g. `{"b:a":"192k"}`,
   not `audio_bitrate`); `vn=None` to drop video when extracting audio.
 - **Images:** flatten alpha to RGB for formats without transparency
-  (jpg/jpeg/bmp/gif).
-- **PyInstaller:** contrib hooks already cover pymupdf/fitz, docx2pdf,
+  (jpg/jpeg/bmp/gif); animated sources keep animation when the target supports
+  it (gif/webp/tiff/png, `save_all=True`).
+- **PyInstaller:** contrib hooks already cover pymupdf/fitz, pywin32,
   tkinterdnd2, customtkinter, cv2, pdfminer, reportlab, etc. The 1.1 deps need
   explicit collectors in the build command: `--collect-all pptx mammoth
   markdownify bs4` (python-pptx ships a default template; markdownify→bs4 needs
@@ -395,6 +475,8 @@ assets\ui\        monochrome nav/UI icons (lucide, ISC), tinted at runtime
 assets\fonts\     bundled Inter TTFs (Regular/Medium/SemiBold/Bold, OFL) — the UI font
 assets\LICENSES.md icon attributions; regenerate via tools\fetch_icons.py (dev)
 tools\fetch_icons.py  dev-only icon generator (Iconify -> PNG; not bundled)
+tests\            verification scripts (v3.1): test_headless.py,
+                  test_gui_smoke.py, test_com_paths.py — plain scripts, venv python
 Bu D3eij.spec     PyInstaller spec (regenerated by the build command)
 .venv\            Python 3.11 environment
 dist\Bu D3eij\    built standalone app (~250 MB; keep the folder together)

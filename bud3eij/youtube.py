@@ -56,6 +56,14 @@ def download_youtube(url: str, fmt: str, out_dir, progress_hook=None) -> Path:
     else:  # mp4
         opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
         opts["merge_output_format"] = "mp4"
+        # merge_output_format only applies when streams are merged; a single-file
+        # non-mp4 download (e.g. only webm available) would land as-is. The
+        # remuxer stream-copies it into an mp4 container so the user always gets
+        # the format they picked. (No-op when the file is already mp4.)
+        opts["postprocessors"] = [{
+            "key": "FFmpegVideoRemuxer",
+            "preferedformat": "mp4",  # yt-dlp's spelling
+        }]
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

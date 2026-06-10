@@ -2,9 +2,9 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-09 (enhancement pass)_
+_Last updated: 2026-06-10 (v3.1 audit-fix pass)_
 
-## Status: working app + standalone exe — v3.0 (Vanguard AI Text Detector)
+## Status: working app + standalone exe — v3.1 (audit-fix pass)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
@@ -21,6 +21,75 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-10 — v3.1: full-codebase audit + fix pass
+A complete audit of the app (hidden bugs, performance, code quality, UI/UX)
+followed by an approved fix pass covering every finding. **`APP_VERSION = "3.1"`.**
+No new tool; behaviour hardening + consistency. Highlights, by severity:
+- **Critical — PPTX→PDF could close the user's running PowerPoint.** PowerPoint
+  is *single-instance* COM, so `Dispatch` attached to an already-open PowerPoint
+  and the cleanup `Quit()` closed the user's presentations. Now tries
+  `GetActiveObject` first and only Quits an instance it started (`owned` flag).
+- **High — DOCX→PDF rewritten as direct Word COM** (docx2pdf dropped from the
+  code *and* `requirements.txt`): docx2pdf only quit Word on success, leaking a
+  hidden WINWORD.EXE per failed conversion. New path: `DisplayAlerts=0`,
+  `Documents.Open → SaveAs(17) → Close(0)` + `Quit()` both in `finally`.
+  Verified incl. a no-leak check on a corrupt docx (`tests/test_com_paths.py`).
+- **High — Vanguard file load moved off the UI thread** (`_vg_load_worker`):
+  a large PDF froze the entire window during extract.
+- **High — Clear/Reset races fixed with generation counters**
+  (`_convert_run`/`_vg_run`): a finishing worker could resurrect status/results
+  over a cleared form (Converter "Clear", Vanguard "Reset"). Stale completions
+  now return early (history still recorded for conversions that completed).
+- **High — save-dialog overwrite honoured:** `remove_background`/`upscale_image`
+  gained `overwrite=`; when the user confirms "Replace?" in `asksaveasfilename`
+  the file is actually replaced instead of silently saving `name (1).png`.
+  Auto-named outputs still never clobber.
+- **Medium fixes:** Recent table only rebuilds when visible (a batch used to
+  rebuild a 100-row table once per file); yt-dlp progress hook throttled to
+  ≥100 ms (it fires per network block and flooded the Tk queue); Tools stats
+  (ffmpeg / history count) refresh on page show; `load_history` drops non-dict
+  entries (a corrupt entry crashed startup); ffmpeg errors raise only the last
+  ~3 stderr lines (full dump goes to stderr/log) so the status label isn't
+  flooded; Vanguard overall score now weighted by **scored tokens** (char
+  weights let truncated mega-chunks dominate on huge docs); upscaler skips SR
+  below `_SR_MIN_GAIN=1.25×` (a full ×4 pass + ~GB RAM for a Lanczos-downscaled
+  result); model downloads get a 30 s socket timeout + **SHA-256 pinning**;
+  `WM_DELETE_WINDOW` warns when a job is still running (`_active_jobs`).
+- **Refactor (M10):** shared `_build_drop_zone` (Converter/Batch/both Marquee
+  panels), `_job_done` finish helper, `_set_image_file` validation,
+  `_ask_open/_ask_save/_ask_dir` dialog wrappers that **remember the last
+  folder per dialog**, `CARD_SOFT` constant, `vg_out_text` accessor.
+- **UI/UX:** Home hero gained Marquee + Vanguard quick actions; Clear-history
+  confirmation; Batch got a **Save to…** export folder, a read-only log, and an
+  `n / N processed` counter; Vanguard input border highlights on drag-hover;
+  upscaler **FIT (Pad/Crop)** selector (the dormant `fit` param implemented:
+  `_fit_crop` = cover + centre-trim); accurate copy for folder drops /
+  extensionless files / multi-file drops; upscaler hint lists all image types.
+- **Low/quick wins:** `.tif` accepted everywhere as a `tiff` alias; animated
+  GIF/WEBP/TIFF/PNG conversions keep animation (`save_all`); MP4 downloads add
+  an `FFmpegVideoRemuxer` so webm-only sources still land as `.mp4`; Vanguard
+  txt reads share `_read_text` (cp1252 fallback) with the converters; tk
+  highlight offsets corrected for astral chars (Tcl surrogate pairs);
+  `--remove-bg FILE [TIER]` + arg validation; a bare file argument opens the
+  GUI preloaded; the windowed exe tees stdout/stderr to
+  `%LOCALAPPDATA%\Bu D3eij\app.log` (`_setup_frozen_logging`); Tools gained
+  **Unload AI models** (rembg/upscaler/vanguard `unload_models()`, ~GBs of RAM);
+  GradientButton pauses its idle animation after 12 s without input (hover
+  resumes) — it's the landing page, so the forever-shine was constant CPU.
+- **Tests now live in the repo (`tests/`)** — the backlog item: 29-check
+  `test_headless.py`, 23-check `test_gui_smoke.py`, 5-check `test_com_paths.py`
+  (all green; plain scripts, run with the venv python).
+- **Verified:** all three test scripts pass (57 checks total) including real
+  DOCX→PDF/PPTX→PDF through the new COM paths with WINWORD leak checks, crop vs
+  pad letterboxing pixels, overwrite vs de-dup paths, CLI tier/validation runs,
+  and a real `--remove-bg img Flash`. **Frozen exe rebuilt + re-verified**
+  (build command unchanged): `--convert note.txt pdf` → valid `%PDF`,
+  `--upscale tiny.png 1080p` → exact 1920×1080, `--remove-bg tiny.png Flash` →
+  RGBA PNG (new CLI tier arg works frozen), the new
+  `%LOCALAPPDATA%\Bu D3eij\app.log` captures the windowed exe's output
+  (session header + `Saved:` lines — `_setup_frozen_logging` works in the
+  bundle), and the GUI boots with no startup crash.
 
 ### 2026-06-09 — Enhancement pass (typography, copy, .txt fix, Vanguard reset, contrast)
 A multi-area polish pass on v3.0 — no new features, improvements only. Each area
@@ -447,8 +516,9 @@ was done and verified in isolation. **`APP_VERSION = "3.0.1"`** (polish bump).
 - [ ] Make **Tools** tab functional (e.g. ffmpeg status check, open output folder,
       appearance settings).
 - [ ] Flesh out the **Home** screen (currently a simple placeholder).
-- [ ] Add an **in-repo test script** (`tests/`) so verification is reproducible
-      instead of ad-hoc temp scripts.
+- [x] Add an **in-repo test script** (`tests/`) so verification is reproducible
+      instead of ad-hoc temp scripts. _(Done in v3.1: test_headless.py,
+      test_gui_smoke.py, test_com_paths.py.)_
 - [ ] Optional: per-file progress for large A/V; quality/bitrate options.
 - [ ] Optional: bundle ffmpeg into the exe if it ever needs to run on a PC
       without ffmpeg installed (adds ~170 MB).

@@ -5,6 +5,51 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v3.1 — 2026-06-10
+
+A full-codebase audit followed by a fix pass — no new tools, everything gets
+safer, faster, and more consistent.
+
+### Fixed
+- **PPTX → PDF no longer closes your open PowerPoint.** Converting a deck while
+  PowerPoint was running could quit it (with all your presentations); the app
+  now only closes PowerPoint instances it started itself.
+- **DOCX → PDF no longer leaks hidden Word processes** when a conversion fails;
+  Word is now driven directly and always cleaned up.
+- **Save dialogs respect "Replace?"** — confirming an overwrite in the Marquee
+  tools actually overwrites instead of silently saving a `name (1).png` copy.
+- **Clear / Reset during a running job** can no longer be undone by the job
+  finishing afterwards (Converter and Vanguard).
+- Loading a large PDF into Vanguard no longer freezes the window; ffmpeg errors
+  no longer dump pages of log into the status line; a corrupted history file no
+  longer crashes the app at startup; `.tif` files are now accepted; animated
+  GIFs keep their animation when converted to WEBP/TIFF/PNG.
+
+### Added
+- **Upscaler FIT selector** — choose **Pad** (letterbox bars) or **Crop**
+  (fill the frame) for the target resolution.
+- **Batch upgrades:** pick an output folder ("Save to…"), a live `n / N`
+  counter, and a read-only results log.
+- **Home quick actions** for Marquee and Vanguard; file dialogs remember their
+  last folder; Vanguard's input highlights when you drag a file over it.
+- **Tools → "Unload AI models"** frees the cached rembg / upscaler / detector
+  models (multiple GB of RAM); Tools stats now refresh on every visit.
+- **Safety & polish:** closing the app warns if a job is still running;
+  clearing history asks first; the windowed exe writes diagnostics to
+  `%LOCALAPPDATA%\Bu D3eij\app.log`; model downloads are integrity-checked;
+  dragging a file onto the exe opens it straight in the Converter;
+  `--remove-bg FILE [TIER]` picks a quality tier from the CLI.
+- **In-repo tests** (`tests/`) — 57 automated checks covering conversions, the
+  GUI, and the Word/PowerPoint COM paths.
+
+### Notes
+- Vanguard's overall score is now weighted by what the model actually scored,
+  improving accuracy on very long documents. The upscaler skips the slow AI
+  pass when the input is already close to the target size (plain high-quality
+  resampling looks identical there and saves minutes + RAM).
+
+---
+
 ## v1.4.5 — 2026-06-08
 
 A flashy upgrade to the main action button.

@@ -10,7 +10,7 @@ from pathlib import Path
 # --------------------------------------------------------------------------- #
 # Format model
 # --------------------------------------------------------------------------- #
-IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff"}
+IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "bmp", "gif", "tiff", "tif"}
 DOC_EXTS = {"pdf", "docx", "txt", "md"}
 PRESENTATION_EXTS = {"pptx"}
 AV_EXTS = {"mp4", "mp3", "wav"}
@@ -28,6 +28,7 @@ CONVERSIONS: dict[str, list[str]] = {
     "bmp": ["png", "jpg", "webp", "gif", "tiff"],
     "gif": ["png", "jpg", "webp", "bmp", "tiff"],
     "tiff": ["png", "jpg", "webp", "bmp", "gif"],
+    "tif": ["png", "jpg", "webp", "bmp", "gif", "tiff"],  # alias of tiff
     "mp4": ["mp3", "wav"],
     "mp3": ["wav"],
     "wav": ["mp3"],
@@ -36,7 +37,7 @@ CONVERSIONS: dict[str, list[str]] = {
 # extension -> Pillow format name
 PILLOW_FORMAT = {
     "jpg": "JPEG", "jpeg": "JPEG", "png": "PNG", "webp": "WEBP",
-    "bmp": "BMP", "gif": "GIF", "tiff": "TIFF",
+    "bmp": "BMP", "gif": "GIF", "tiff": "TIFF", "tif": "TIFF",
 }
 
 
