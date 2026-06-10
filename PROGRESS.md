@@ -2,9 +2,9 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-10 (v3.1 audit-fix pass)_
+_Last updated: 2026-06-10 (v3.1.5 dopamine buttons)_
 
-## Status: working app + standalone exe — v3.1 (audit-fix pass)
+## Status: working app + standalone exe — v3.1.5 (animated CTA redesign)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
@@ -21,6 +21,37 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-10 — v3.1.5: "dopamine" CTA redesign — GradientButton v2 on all 5 actions
+User request: a crazier, dopamine-enhancing Convert button, applied to every
+primary action. **`APP_VERSION = "3.1.5"`** (pure-UX pass, mirrors the 1.4.5
+button precedent). The Pillow-composed `GradientButton` was redesigned and now
+powers **five** CTAs: Converter "Convert Now", YouTube "Download", Marquee
+"Remove Background" + "Upscale Image", Vanguard "Detect AI Text".
+- **New effects:** living **lava gradient** (the body scrolls through a looping
+  deep-red→red→ember-orange→hot-pink palette, `LAVA` + `_lava_strip`); an
+  **orbiting comet** with a golden trail racing around the border
+  (`_perimeter` path + pre-rendered `_glow_dot` sprites — no per-tick blurs);
+  **rising ember sparkles**; a **click ripple** expanding from the exact press
+  point; busy = lava + **flowing candy stripes** + double shine + per-button
+  `busy_text` dots (Converting/Downloading/Removing/Upscaling/Detecting); and
+  `stop_busy(success=True)` fires a **confetti burst + white flash** — wired
+  through `_job_done(success=error is None)` so every successful job ends with
+  a little celebration. Text gained a soft shadow; `icon=` picks the white-
+  tinted `assets/ui` glyph (sparkles/download/shield-check).
+- **Fixes folded in:** the busy state used to render on the **grey** base
+  (static cache keyed on `enabled`, and busy buttons are disabled) — now keyed
+  on `alive = enabled or busy`, so a running job shows the full lava look;
+  out-of-canvas particles are skipped (PIL `alpha_composite` raises on
+  negative coords); the 12 s idle pause is kept — clicks/celebrations reset it,
+  ambient embers deliberately don't (it would never sleep), and pausing clears
+  ember particles so none freeze mid-air.
+- **Verified:** 7 composed state renders inspected visually (idle ×2 lava
+  phases, hover, ripple, busy stripes, celebration, disabled grey); a live
+  soak test drove start_busy → confetti → page switches → second button with
+  zero exceptions; `tests/test_gui_smoke.py` extended to assert all five CTAs
+  are GradientButtons with the right busy texts + confetti spawning (34/34
+  green). Frozen exe rebuilt + boot-verified.
 
 ### 2026-06-10 — v3.1: full-codebase audit + fix pass
 A complete audit of the app (hidden bugs, performance, code quality, UI/UX)

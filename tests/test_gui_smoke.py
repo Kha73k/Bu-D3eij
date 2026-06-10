@@ -96,6 +96,19 @@ check("unload note set", "unloaded" in a.tools_note.cget("text"))
 # GradientButton idle pause attributes
 check("convert button idle pause wired", hasattr(a.convert_btn, "_idle_ms"))
 
+# v3.1.5: all five action buttons share the animated GradientButton design
+for name, btn, busy in [("convert", a.convert_btn, "Converting"),
+                        ("youtube", a.yt_btn, "Downloading"),
+                        ("bg-remover", a.mq_btn, "Removing"),
+                        ("upscaler", a.up_btn, "Upscaling"),
+                        ("vanguard", a.vg_btn, "Detecting")]:
+    check(f"{name} button is a GradientButton",
+          isinstance(btn, app.GradientButton))
+    check(f"{name} busy text", getattr(btn, "_busy_text", "") == busy,
+          getattr(btn, "_busy_text", ""))
+a.vg_btn._celebrate()
+check("celebration spawns confetti", len(a.vg_btn._particles) > 0)
+
 a.update()
 a.after(200, a.destroy)
 a.mainloop()

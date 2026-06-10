@@ -313,18 +313,32 @@ still apply; only the file a function lives in changed.
   - The Recent table only refreshes when it's the visible frame
     (`self._current_frame`, set by `show_frame`); Tools stats refresh on show
     (`_refresh_tools`); a bare file argument to the exe preloads the Converter.
-- **Animated Convert button (1.4.5):** the Converter's "Convert Now" is a custom
-  `GradientButton(ctk.CTkFrame)` (defined just above `class App`), not a
-  `CTkButton`. CustomTkinter has no CSS, so the whole button is **composed in
-  Pillow** (red gradient + gloss + gaussian shine band + blurred glow + text +
-  white-tinted `assets/ui/sparkles.png`) and animated by swapping a `CTkImage`
-  on an inner label each tick. It's a drop-in: supports `grid`, `command`,
-  `configure(state="normal"|"disabled")`, plus `start_busy()`/`stop_busy()`
-  (the convert flow calls these in `on_convert_click`/`_convert_done`). States:
-  disabled (flat grey), idle (sweeping shine + breathing glow), hover (brighter
-  + glow bloom), press (dim), busy (double-shine flow + "Converting…" dots).
-  Static layers cache by `(w, h, enabled)`; the loop only runs while **mapped**
-  (pauses on `<Unmap>`, cancelled on `<Destroy>`) so it's idle-cheap. Render is
+- **Animated action buttons (`GradientButton`, redesigned v3.1.5):** all five
+  primary CTAs — Converter "Convert Now", YouTube "Download", Marquee "Remove
+  Background" + "Upscale Image", Vanguard "Detect AI Text" — are the same
+  custom `GradientButton(ctk.CTkFrame)` (defined just above `class App`), not
+  `CTkButton`s. CustomTkinter has no CSS, so the whole visual is **composed in
+  Pillow** and animated by swapping a `CTkImage` on an inner label each tick.
+  v3.1.5 "dopamine" effects: a **living lava base** (the gradient scrolls
+  through the looping `LAVA` palette deep-red → red → ember orange → hot pink),
+  top gloss + sweeping shine, an **orbiting comet** (white-hot head + golden
+  trail racing along the rounded-rect border via `_perimeter`), **rising ember
+  particles** (`_spawn_ember`, capped per state), a **click ripple** from the
+  press point (`_burst`), and on `stop_busy(success=True)` a **confetti burst +
+  white flash** (`_celebrate` — the payoff; `_job_done` passes
+  `success=error is None`). Busy = lava + **flowing diagonal candy stripes** +
+  double shine + animated `busy_text` dots (per-button: Converting /
+  Downloading / Removing / Upscaling / Detecting); `icon=` names an
+  `assets/ui/*.png` tinted white. Drop-in API: `grid`, `command`,
+  `configure(state=…)`, `start_busy()`/`stop_busy(success=…)`. Static layers
+  cache by `(w, h, alive)` where **alive = enabled or busy** (a running button
+  shows full lava even though clicks are disabled — keying on `enabled` alone
+  made the old busy state grey). The loop only runs while **mapped** (pauses on
+  `<Unmap>`, cancelled on `<Destroy>`) and pauses after `IDLE_PAUSE_MS` (12 s)
+  without input — clicks/celebrations reset the idle clock, plain embers don't
+  (or it would never pause). Particle/orbit sprites are pre-rendered radial
+  glows (`_glow_dot`) — never per-tick Gaussian blurs; out-of-canvas particles
+  are skipped (negative `alpha_composite` coords raise). Render is
   device-pixel correct via `_get_widget_scaling()` (source rendered at realized
   px, `CTkImage size = px / scaling`).
 - **Avoiding text overflow:** a fixed-size container (`grid_propagate(False)`)

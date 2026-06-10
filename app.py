@@ -177,7 +177,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "3.1"
+APP_VERSION = "3.1.5"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -208,46 +208,64 @@ except Exception:  # noqa: BLE001 - fall back to a built-in theme
 
 
 class GradientButton(ctk.CTkFrame):
-    """A flashy, fully animated 'Convert' button drawn entirely with Pillow.
+    """A flashy, fully animated action button drawn entirely with Pillow.
 
     CustomTkinter (Tkinter) has no CSS engine — no gradients, sweeping shines,
     glows or transitions — so the button's whole visual is composed as a PIL
     image and swapped onto an inner label every animation tick. Effects:
-      * red left→right gradient with a top gloss sheen,
-      * a light band that sweeps across (the "shine"),
-      * a breathing glow when idle, a brighter glow + faster shine on hover,
-      * a quick darken on press,
-      * a continuous double-shine "flow" with animated "Converting…" dots while
-        a conversion runs (``start_busy`` / ``stop_busy``),
+      * a "living lava" base — the gradient continuously flows through deep
+        red → brand red → ember orange → hot pink and back (seamless loop),
+      * a top gloss sheen + a light band that sweeps across (the "shine"),
+      * an orbiting comet: a white-hot light with a golden trail racing around
+        the button's border,
+      * rising ember sparkles that twinkle and drift up off the button,
+      * a breathing glow when idle; brighter glow + faster everything on hover,
+      * a click ripple bursting from the exact press point,
+      * while a job runs (``start_busy``/``stop_busy``): flowing diagonal candy
+        stripes, a double shine, and animated "<busy_text>…" dots,
+      * ``stop_busy(success=True)`` fires a confetti burst + white flash — the
+        little dopamine payoff when a job lands,
       * a flat, greyed, motionless look while disabled.
 
-    Drop-in for the old ``CTkButton``: supports ``grid``, a ``command`` callback
-    and ``configure(state="normal"|"disabled")``. Animation only runs while the
-    widget is mapped (it pauses when you switch pages) and is fully cancelled on
-    destroy, so it never burns CPU in the background.
+    Drop-in for ``CTkButton``: supports ``grid``, a ``command`` callback and
+    ``configure(state="normal"|"disabled")``; ``icon`` is an ``assets/ui`` PNG
+    name tinted white. Animation only runs while the widget is mapped (it
+    pauses when you switch pages), pauses after IDLE_PAUSE_MS without input,
+    and is fully cancelled on destroy, so it never burns CPU in the background.
     """
 
     GLOW_PAD = 9      # logical px of glow margin reserved around the body
     RADIUS = 0.34     # corner radius as a fraction of the body height
+    # The looping "lava" palette the enabled body flows through (first == last
+    # so the horizontal scroll wraps seamlessly).
+    LAVA = ("#8C0008", "#E11414", "#FF6A00", "#FF2D55", "#F01818", "#8C0008")
 
     def __init__(self, master, text: str = "Convert", height: int = 46,
-                 command=None, state: str = "normal", **_ignored):
+                 command=None, state: str = "normal", icon: str = "sparkles",
+                 busy_text: str = "Converting", **_ignored):
         super().__init__(master, fg_color="transparent",
                          height=height + 2 * self.GLOW_PAD)
         self._text = text
         self._command = command
         self._btn_h = height
+        self._icon_name = icon
+        self._busy_text = busy_text
         self._enabled = state != "disabled"
         self._busy = False
         self._hover = False
         self._press = False
         # animation state
-        self._phase = 0.0     # shine sweep position 0..1
-        self._breath = 0.0    # breathing oscillator (radians)
-        self._glow = 0.0      # eased glow amount 0..1
-        self._dots = 0        # animated "Converting…" dot count
+        self._phase = 0.0        # shine sweep position 0..1
+        self._color_phase = 0.0  # lava gradient scroll position (wraps at 1)
+        self._orbit = 0.0        # border-comet position (wraps at 1)
+        self._breath = 0.0       # breathing oscillator (radians)
+        self._glow = 0.0         # eased glow amount 0..1
+        self._dots = 0           # animated "<busy_text>…" dot count
         self._dot_acc = 0
-        self._idle_ms = 0     # ms without hover/press/busy; pauses the loop
+        self._idle_ms = 0        # ms without hover/press/busy; pauses the loop
+        self._particles: list[dict] = []  # embers + confetti
+        self._burst = None       # (x, y, t0) click ripple, widget coords
+        self._flash_t0 = None    # success flash start time
         self._anim_id = None
         self._resize_id = None
         # cached static layers (rebuilt on size/state change)
@@ -295,20 +313,49 @@ class GradientButton(ctk.CTkFrame):
         self._render()
 
     def start_busy(self):
-        """Switch to the animated 'Converting…' look (clicks ignored)."""
+        """Switch to the animated '<busy_text>…' look (clicks ignored)."""
         self._busy = True
         self._phase = 0.0
         self._dots = 0
         self._dot_acc = 0
+        self._idle_ms = 0
         self._start()
 
-    def stop_busy(self):
+    def stop_busy(self, success: bool = False):
+        """Leave the busy look; with ``success`` fire the confetti celebration."""
         self._busy = False
+        if success:
+            self._celebrate()
         if self._enabled:
             self._start()
         else:
             self._stop()
         self._render()
+
+    def _celebrate(self):
+        """Confetti burst + white flash — the payoff for a finished job."""
+        import math
+        import random
+
+        w, h = self.winfo_width(), self.winfo_height()
+        if w <= 1 or h <= 1:
+            return
+        cx, cy = w / 2, h / 2
+        for _ in range(26):
+            ang = random.uniform(0.0, 2 * math.pi)
+            speed = random.uniform(1.0, 3.2)
+            self._particles.append({
+                "x": cx + math.cos(ang) * 8, "y": cy + math.sin(ang) * 4,
+                "vx": math.cos(ang) * speed,
+                "vy": math.sin(ang) * speed * 0.7 - 0.9,
+                "grav": 0.14,  # confetti falls; also marks it as celebration fx
+                "age": 0.0, "life": random.uniform(0.55, 1.0),
+                "size": random.choice((3, 4, 6)),
+                "color": random.choice(("gold", "white", "pink", "red")),
+            })
+        self._flash_t0 = time.monotonic()
+        self._idle_ms = 0
+        self._start()
 
     # ---- event handlers -------------------------------------------------- #
     IDLE_PAUSE_MS = 12_000  # stop the idle shine after this long without input
@@ -327,11 +374,16 @@ class GradientButton(ctk.CTkFrame):
         if self._enabled and not self._busy:
             self._press = True
 
-    def _on_release(self, _e):
+    def _on_release(self, e):
         fire = self._press and self._hover and self._enabled and not self._busy
         self._press = False
-        if fire and self._command is not None:
-            self._command()
+        if fire:
+            # Ripple burst from the exact click point (instant feedback).
+            self._burst = (e.x, e.y, time.monotonic())
+            self._idle_ms = 0
+            self._start()
+            if self._command is not None:
+                self._command()
 
     def _on_configure(self, _e):
         if self._resize_id is not None:
@@ -374,21 +426,28 @@ class GradientButton(ctk.CTkFrame):
 
     def _tick(self):
         import math
+        import random
         self._anim_id = None
         if not self.winfo_exists() or not self.winfo_ismapped():
             return
         if self._busy:
             self._phase = (self._phase + 0.035) % 1.0
-            target_glow = 0.32 + 0.12 * (0.5 + 0.5 * math.sin(self._breath))
-            interval = 33
+            self._color_phase = (self._color_phase + 0.011) % 1.0
+            self._orbit = (self._orbit + 0.016) % 1.0
+            target_glow = 0.34 + 0.12 * (0.5 + 0.5 * math.sin(self._breath))
+            interval, spawn_p, cap = 33, 0.45, 9
         elif self._hover:
             self._phase = (self._phase + 0.022) % 1.0
-            target_glow = 0.60
-            interval = 33
+            self._color_phase = (self._color_phase + 0.009) % 1.0
+            self._orbit = (self._orbit + 0.012) % 1.0
+            target_glow = 0.62
+            interval, spawn_p, cap = 33, 0.65, 12
         else:
             self._phase = (self._phase + 0.012) % 1.0
+            self._color_phase = (self._color_phase + 0.0035) % 1.0
+            self._orbit = (self._orbit + 0.006) % 1.0
             target_glow = 0.10 + 0.08 * (0.5 + 0.5 * math.sin(self._breath))
-            interval = 50
+            interval, spawn_p, cap = 50, 0.22, 6
         if self._press:
             target_glow = 0.25
         self._breath += 0.10
@@ -398,19 +457,57 @@ class GradientButton(ctk.CTkFrame):
             if self._dot_acc >= 400:
                 self._dot_acc = 0
                 self._dots = (self._dots + 1) % 4
+        # ---- particles: spawn rising embers, advance everything ----
+        if self._enabled or self._busy:
+            embers = sum(1 for p in self._particles if "grav" not in p)
+            if embers < cap and random.random() < spawn_p:
+                self._spawn_ember()
+        dt = interval / 1000.0
+        alive = []
+        for p in self._particles:
+            p["age"] += dt
+            if p["age"] >= p["life"]:
+                continue
+            p["vy"] += p.get("grav", 0.0)
+            p["x"] += p["vx"] * dt * 60
+            p["y"] += p["vy"] * dt * 60
+            alive.append(p)
+        self._particles = alive
         # Pause the idle animation after a while (the Converter is the landing
         # page, so a forever-spinning shine is constant CPU/battery drain).
-        # Hover, busy or re-mapping resumes it via _start().
-        if self._busy or self._hover or self._press:
+        # Hover, busy, clicks, celebrations or re-mapping resume it.
+        celebration = (self._burst is not None or self._flash_t0 is not None
+                       or any("grav" in p for p in self._particles))
+        if self._busy or self._hover or self._press or celebration:
             self._idle_ms = 0
         else:
             self._idle_ms += interval
             if self._idle_ms >= self.IDLE_PAUSE_MS:
+                self._particles.clear()  # don't freeze embers mid-air
                 self._render()
                 return
         self._render()
         if self._busy or self._enabled:
             self._anim_id = self.after(interval, self._tick)
+
+    def _spawn_ember(self):
+        """Add one twinkling ember that drifts up off the button body."""
+        import random
+
+        scaling = self._get_widget_scaling()
+        pad = max(1, int(round(self.GLOW_PAD * scaling)))
+        w, h = self.winfo_width(), self.winfo_height()
+        if w <= 2 * pad + 12 or h <= 2 * pad:
+            return
+        self._particles.append({
+            "x": random.uniform(pad + 6, w - pad - 6),
+            "y": random.uniform(pad + (h - 2 * pad) * 0.35, h - pad - 4),
+            "vx": random.uniform(-0.15, 0.15),
+            "vy": random.uniform(-0.5, -0.22),
+            "age": 0.0, "life": random.uniform(0.55, 1.1),
+            "size": random.choice((3, 4)),
+            "color": random.choice(("gold", "gold", "white")),
+        })
 
     # ---- rendering ------------------------------------------------------- #
     @staticmethod
@@ -434,11 +531,12 @@ class GradientButton(ctk.CTkFrame):
         except Exception:  # noqa: BLE001
             return ImageFont.load_default()
 
-    def _load_spark(self, px: int):
+    def _load_icon(self, px: int):
         try:
             from PIL import Image
 
-            s = Image.open(resource_path("assets/ui/sparkles.png")).convert("RGBA")
+            s = Image.open(
+                resource_path(f"assets/ui/{self._icon_name}.png")).convert("RGBA")
             white = Image.new("RGBA", s.size, (255, 255, 255, 0))
             white.putalpha(s.split()[3])
             scale = px / max(white.size)
@@ -447,8 +545,99 @@ class GradientButton(ctk.CTkFrame):
         except Exception:  # noqa: BLE001
             return None
 
+    @staticmethod
+    def _hex(color: str) -> tuple[int, int, int]:
+        c = color.lstrip("#")
+        return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+    @classmethod
+    def _lava_strip(cls, width: int):
+        """A seamless 1-px-high loop of the LAVA palette, doubled for cropping."""
+        from PIL import Image
+
+        stops = [cls._hex(c) for c in cls.LAVA]
+        row = Image.new("RGB", (width, 1))
+        px = row.load()
+        n = len(stops) - 1
+        for x in range(width):
+            t = x / width * n
+            i = min(int(t), n - 1)
+            f = t - i
+            c0, c1 = stops[i], stops[i + 1]
+            px[x, 0] = tuple(int(c0[k] + (c1[k] - c0[k]) * f) for k in range(3))
+        strip = Image.new("RGB", (width * 2, 1))
+        strip.paste(row, (0, 0))
+        strip.paste(row, (width, 0))
+        return strip
+
+    @staticmethod
+    def _glow_dot(rgb: tuple[int, int, int], radius: int):
+        """A small radial-falloff glow sprite (RGBA) for particles/orbit."""
+        from PIL import Image
+
+        r = max(2, int(radius))
+        s = Image.new("RGBA", (2 * r + 1, 2 * r + 1), rgb + (0,))
+        px = s.load()
+        for y in range(2 * r + 1):
+            for x in range(2 * r + 1):
+                d = ((x - r) ** 2 + (y - r) ** 2) ** 0.5
+                if d <= r:
+                    px[x, y] = rgb + (int(235 * (1 - d / r) ** 1.6),)
+        return s
+
+    @staticmethod
+    def _perimeter(rw: int, rh: int, radius: int):
+        """(total_length, point(dist)->(x,y)) along the rounded-rect border."""
+        import math
+
+        w, h, r = rw - 1, rh - 1, min(radius, min(rw, rh) // 2)
+        sw, sh = max(0, w - 2 * r), max(0, h - 2 * r)
+        arc = math.pi * r / 2
+        total = 2 * sw + 2 * sh + 4 * arc
+
+        def point(d: float):
+            d = d % total
+            if d < sw:                       # top edge, left -> right
+                return (r + d, 0.0)
+            d -= sw
+            if d < arc:                      # top-right arc
+                a = d / arc * (math.pi / 2)
+                return (w - r + math.sin(a) * r, r - math.cos(a) * r)
+            d -= arc
+            if d < sh:                       # right edge, down
+                return (float(w), r + d)
+            d -= sh
+            if d < arc:                      # bottom-right arc
+                a = d / arc * (math.pi / 2)
+                return (w - r + math.cos(a) * r, h - r + math.sin(a) * r)
+            d -= arc
+            if d < sw:                       # bottom edge, right -> left
+                return (w - r - d, float(h))
+            d -= sw
+            if d < arc:                      # bottom-left arc
+                a = d / arc * (math.pi / 2)
+                return (r - math.sin(a) * r, h - r + math.cos(a) * r)
+            d -= arc
+            if d < sh:                       # left edge, up
+                return (0.0, h - r - d)
+            d -= sh
+            a = d / arc * (math.pi / 2)      # top-left arc
+            return (r - math.cos(a) * r, r - math.sin(a) * r)
+
+        return total, point
+
+    # particle palette: name -> RGB
+    _DOT_COLORS = {
+        "gold": (255, 196, 77), "white": (255, 255, 255),
+        "pink": (255, 45, 85), "red": (255, 92, 97),
+    }
+
     def _ensure_static(self, w: int, h: int, scaling: float):
-        key = (w, h, self._enabled)
+        # Keyed on "alive": a running (busy) button renders the full lava look
+        # even though clicks are disabled — the old design dropped to grey
+        # mid-conversion, which is exactly the moment that should feel alive.
+        alive = self._enabled or self._busy
+        key = (w, h, alive)
         if self._stat_key == key and self._stat is not None:
             return self._stat
         import math
@@ -463,28 +652,30 @@ class GradientButton(ctk.CTkFrame):
         mask = Image.new("L", (rw, rh), 0)
         ImageDraw.Draw(mask).rounded_rectangle([0, 0, rw - 1, rh - 1], radius, fill=255)
 
-        if self._enabled:
-            c_l, c_r = (0xF0, 0x2A, 0x2A), (0x8C, 0x00, 0x08)
-            gloss_peak = 60
-        else:
+        # Disabled keeps a flat grey gradient; alive gets the looping lava
+        # strip (cropped + scrolled per tick in _compose).
+        lava = self._lava_strip(512) if alive else None
+        base_grey = None
+        if not alive:
             c_l, c_r = (0x6E, 0x66, 0x68), (0x4A, 0x44, 0x46)
-            gloss_peak = 28
-        row = Image.new("RGB", (rw, 1))
-        rpx = row.load()
-        for x in range(rw):
-            t = x / max(1, rw - 1)
-            rpx[x, 0] = (int(c_l[0] + (c_r[0] - c_l[0]) * t),
-                         int(c_l[1] + (c_r[1] - c_l[1]) * t),
-                         int(c_l[2] + (c_r[2] - c_l[2]) * t))
-        base = row.resize((rw, rh))
+            row = Image.new("RGB", (rw, 1))
+            rpx = row.load()
+            for x in range(rw):
+                t = x / max(1, rw - 1)
+                rpx[x, 0] = (int(c_l[0] + (c_r[0] - c_l[0]) * t),
+                             int(c_l[1] + (c_r[1] - c_l[1]) * t),
+                             int(c_l[2] + (c_r[2] - c_l[2]) * t))
+            base_grey = row.resize((rw, rh))
 
+        # gloss sheen mask (vertical falloff from the top)
+        gloss_peak = 60 if alive else 28
         gcol = Image.new("L", (1, rh))
         gpx = gcol.load()
         for y in range(rh):
             ty = y / max(1, rh - 1)
             gpx[0, y] = int(max(0.0, (0.5 - ty) / 0.5) * gloss_peak)
-        base = Image.composite(Image.new("RGB", (rw, rh), (255, 255, 255)),
-                               base, gcol.resize((rw, rh)))
+        gloss = gcol.resize((rw, rh))
+        white_rgb = Image.new("RGB", (rw, rh), (255, 255, 255))
 
         band_w = max(int(rh * 1.4), int(rw * 0.15), 2)
         sb = Image.new("L", (band_w, 1))
@@ -496,18 +687,43 @@ class GradientButton(ctk.CTkFrame):
         shine_a = sb.resize((band_w, rh))
         shine_w = Image.new("RGB", (band_w, rh), (255, 255, 255))
 
+        # diagonal candy stripes (busy): an L mask wider than the body so a
+        # cropped window can slide for the flow effect
+        period = max(18, int(rh * 0.65))
+        stripes = Image.new("L", (rw + period, rh), 0)
+        sd = ImageDraw.Draw(stripes)
+        for x0 in range(-rh - period, rw + 2 * period, period):
+            sd.polygon([(x0, rh), (x0 + period // 2, rh),
+                        (x0 + period // 2 + rh, 0), (x0 + rh, 0)], fill=30)
+
         glow = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        if self._enabled:
+        if alive:
             ImageDraw.Draw(glow).rounded_rectangle(
                 [pad - 2, pad - 2, w - pad + 1, h - pad + 1], radius + 2,
                 fill=(0xFF, 0x22, 0x22, 255))
             glow = glow.filter(ImageFilter.GaussianBlur(max(2, int(pad * 1.1))))
 
+        # orbit comet sprites: (sprite, lag along the path 0..1), head first
+        halo = self._glow_dot(self._DOT_COLORS["gold"], int(5.5 * scaling) + 2)
+        head = self._glow_dot((255, 255, 255), int(3.2 * scaling) + 1)
+        orbit = [(halo, 0.0), (head, 0.0)]
+        for i, alpha in enumerate((170, 120, 80, 48)):
+            tr = self._glow_dot(self._DOT_COLORS["gold"],
+                                max(2, int((4.2 - i * 0.8) * scaling)))
+            tr.putalpha(tr.split()[3].point(lambda v, a=alpha: v * a // 255))
+            orbit.append((tr, 0.016 * (i + 1)))
+
+        dots = {(name, size): self._glow_dot(rgb, int(size * scaling))
+                for name, rgb in self._DOT_COLORS.items() for size in (3, 4, 6)}
+
         self._stat = dict(
-            pad=pad, rw=rw, rh=rh, mask=mask, base=base, band_w=band_w,
-            shine_a=shine_a, shine_w=shine_w, glow=glow,
+            pad=pad, rw=rw, rh=rh, mask=mask, lava=lava, base_grey=base_grey,
+            gloss=gloss, white_rgb=white_rgb, band_w=band_w,
+            shine_a=shine_a, shine_w=shine_w, stripes=stripes, period=period,
+            glow=glow, perim=self._perimeter(rw, rh, radius), orbit=orbit,
+            dots=dots,
             font=self._load_font(int(round(self._btn_h * 0.36 * scaling))),
-            spark=self._load_spark(int(round(self._btn_h * 0.42 * scaling))),
+            spark=self._load_icon(int(round(self._btn_h * 0.42 * scaling))),
         )
         self._stat_key = key
         return self._stat
@@ -524,23 +740,41 @@ class GradientButton(ctk.CTkFrame):
         scaling = self._get_widget_scaling()
         st = self._ensure_static(w, h, scaling)
         pad, rw, rh = st["pad"], st["rw"], st["rh"]
+        now = time.monotonic()
+        alive = self._enabled or self._busy
 
-        if not self._enabled and not self._busy:
+        # ---- body base: scrolling lava (enabled) or flat grey (disabled) ----
+        if alive and st["lava"] is not None:
+            strip = st["lava"]
+            half = strip.width // 2
+            off = int((self._color_phase % 1.0) * half)
+            body = strip.crop((off, 0, off + half, 1)).resize((rw, rh))
+        else:
+            body = st["base_grey"].copy()
+        body = Image.composite(st["white_rgb"], body, st["gloss"])  # top sheen
+
+        if not alive:
             factor = 1.0
         elif self._press:
             factor = 0.90
         elif self._hover:
-            factor = 1.14
+            factor = 1.10
         elif self._busy:
-            factor = 1.06
+            factor = 1.05
         else:
             factor = 1.0 + 0.05 * (0.5 + 0.5 * math.sin(self._breath))
-
-        body = st["base"].copy()
         if abs(factor - 1.0) > 1e-3:
             body = ImageEnhance.Brightness(body).enhance(factor)
 
-        if self._enabled or self._busy:
+        # ---- flowing candy stripes while busy ----
+        if self._busy:
+            period = st["period"]
+            soff = int(self._phase * 2 * period) % period
+            window = st["stripes"].crop((period - soff, 0, period - soff + rw, rh))
+            body.paste(st["white_rgb"], (0, 0), window)
+
+        # ---- sweeping shine (double band while busy) ----
+        if alive:
             bw = st["band_w"]
             spans = [self._phase]
             if self._busy:
@@ -549,32 +783,94 @@ class GradientButton(ctk.CTkFrame):
                 sx = int(ph * (rw + bw)) - bw
                 body.paste(st["shine_w"], (sx, 0), st["shine_a"])
 
+        # ---- click ripple (expanding ring from the press point) ----
+        if self._burst is not None:
+            bx, by, t0 = self._burst
+            age = now - t0
+            dur = 0.45
+            if age >= dur:
+                self._burst = None
+            else:
+                frac = age / dur
+                cx = min(max(bx - pad, 0), rw)
+                cy = min(max(by - pad, 0), rh)
+                radius = 6 + frac * rw * 0.55
+                ring = Image.new("RGBA", (rw, rh), (0, 0, 0, 0))
+                rd = ImageDraw.Draw(ring)
+                alpha = int(180 * (1 - frac))
+                width = max(2, int((4 - 3 * frac) * scaling))
+                rd.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                           outline=(255, 240, 220, alpha), width=width)
+                body.paste(ring, (0, 0), ring)
+
+        # ---- icon + label (with a soft shadow for punch) ----
         draw = ImageDraw.Draw(body)
-        label = ("Converting" + "." * self._dots) if self._busy else self._text
-        txt_color = (255, 255, 255) if (self._enabled or self._busy) else (190, 182, 184)
+        label = (self._busy_text + "." * self._dots) if self._busy else self._text
+        txt_color = (255, 255, 255) if alive else (190, 182, 184)
         font, spark = st["font"], st["spark"]
         bbox = draw.textbbox((0, 0), label, font=font)
         tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
         gap = max(2, int(rh * 0.12))
-        show_spark = spark is not None and (self._enabled or self._busy)
+        show_spark = spark is not None and alive
         sw = (spark.width + gap) if show_spark else 0
         x0 = (rw - (tw + sw)) // 2
         y0 = (rh - th) // 2 - bbox[1]
         if show_spark:
             body.paste(spark, (x0, (rh - spark.height) // 2), spark)
             x0 += spark.width + gap
+        if alive:
+            draw.text((x0 + 1, y0 + 2), label, font=font, fill=(82, 0, 10))
         draw.text((x0, y0), label, font=font, fill=txt_color)
 
         body = body.convert("RGBA")
         body.putalpha(st["mask"])
 
         full = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        if self._glow > 0.01 and self._enabled and not self._press:
+        if self._glow > 0.01 and alive and not self._press:
             g = st["glow"].copy()
             amt = min(1.0, self._glow)
             g.putalpha(g.split()[3].point(lambda v: int(v * amt)))
             full.alpha_composite(g)
         full.alpha_composite(body, (pad, pad))
+
+        # ---- orbiting comet along the border ----
+        if alive:
+            total, ppt = st["perim"]
+            for spr, lag in st["orbit"]:
+                px, py = ppt(((self._orbit - lag) % 1.0) * total)
+                ox = int(pad + px - spr.width / 2)
+                oy = int(pad + py - spr.height / 2)
+                if 0 <= ox and 0 <= oy and ox + spr.width <= w and oy + spr.height <= h:
+                    full.alpha_composite(spr, (ox, oy))
+
+        # ---- particles: rising embers + celebration confetti ----
+        for p in self._particles:
+            spr = st["dots"].get((p["color"], p["size"]))
+            if spr is None:
+                continue
+            ox = int(p["x"] - spr.width / 2)
+            oy = int(p["y"] - spr.height / 2)
+            # alpha_composite rejects out-of-canvas targets; drifting particles
+            # simply wink out at the widget edge
+            if ox < 0 or oy < 0 or ox + spr.width > w or oy + spr.height > h:
+                continue
+            tl = p["age"] / p["life"]
+            amt = math.sin(math.pi * min(1.0, tl))  # fade in, twinkle out
+            im = spr.copy()
+            im.putalpha(im.split()[3].point(lambda v, a=amt: int(v * a)))
+            full.alpha_composite(im, (ox, oy))
+
+        # ---- success flash (quick white pulse over the body) ----
+        if self._flash_t0 is not None:
+            age = now - self._flash_t0
+            dur = 0.35
+            if age >= dur:
+                self._flash_t0 = None
+            else:
+                amt = int(150 * (1 - age / dur))
+                fl = Image.new("RGBA", (rw, rh), (255, 255, 255, 0))
+                fl.putalpha(st["mask"].point(lambda v, a=amt: v * a // 255))
+                full.alpha_composite(fl, (pad, pad))
         return full
 
     def _render(self):
@@ -1304,8 +1600,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.clear_btn.grid(row=0, column=2)
 
         self.convert_btn = GradientButton(
-            card, text="Convert Now", height=46,
-            command=self.on_convert_click, state="disabled",
+            card, text="Convert Now", height=46, icon="sparkles",
+            busy_text="Converting", command=self.on_convert_click, state="disabled",
         )
         self.convert_btn.grid(row=2, column=0, sticky="ew", padx=18, pady=(8, 16))
 
@@ -1501,6 +1797,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         progress_bar.configure(mode="determinate")
         progress_bar.set(0)
         button.configure(state="normal")
+        if hasattr(button, "stop_busy"):  # GradientButton: confetti on success
+            button.stop_busy(success=error is None)
         if error:
             status_label.configure(text=f"✕  {error}", text_color=ERROR)
             self.add_history(src, None, False, error)
@@ -1630,7 +1928,6 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self._job_finished()
             self.add_history(src, out, error is None, error or "")
             return
-        self.convert_btn.stop_busy()
         self._job_done(status_label=self.status, progress_bar=self.progress,
                        button=self.convert_btn, src=src, out=out, error=error)
 
@@ -1755,12 +2052,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             opts, text="MP4 = video · MP3 = audio (192 kbps)", text_color=MUTED,
         ).grid(row=0, column=2, padx=(14, 0))
 
-        self.yt_btn = ctk.CTkButton(
-            card, text=" Download", height=46, font=self._font(15, "semibold"),
-            image=self._ui_icon("download", 18, "#FFFFFF", "#FFFFFF"), compound="left",
-            command=self.on_youtube_download,
+        self.yt_btn = GradientButton(
+            card, text="Download", height=46, icon="download",
+            busy_text="Downloading", command=self.on_youtube_download,
         )
-        self.yt_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(8, 16))
+        self.yt_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(2, 10))
 
         self.yt_progress = ctk.CTkProgressBar(frame, height=8)
         self.yt_progress.set(0)
@@ -1787,6 +2083,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._job_started()
         self._yt_last_ui = 0.0
         self.yt_btn.configure(state="disabled")
+        self.yt_btn.start_busy()
         self.yt_progress.grid()
         self.yt_progress.configure(mode="determinate")
         self.yt_progress.set(0)
@@ -1920,13 +2217,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.mq_model_caption.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 10))
 
-        self.mq_btn = ctk.CTkButton(
-            card, text=" Remove Background", height=46,
-            font=self._font(15, "semibold"),
-            image=self._ui_icon("sparkles", 18, "#FFFFFF", "#FFFFFF"), compound="left",
-            command=self.on_marquee_remove, state="disabled",
+        self.mq_btn = GradientButton(
+            card, text="Remove Background", height=46, icon="sparkles",
+            busy_text="Removing", command=self.on_marquee_remove, state="disabled",
         )
-        self.mq_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 16))
+        self.mq_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
 
         self.mq_progress = ctk.CTkProgressBar(panel, height=8)
         self.mq_progress.set(0)
@@ -2003,13 +2298,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.up_fit.set("Pad")
         self.up_fit.grid(row=0, column=3)
 
-        self.up_btn = ctk.CTkButton(
-            card, text=" Upscale Image", height=46,
-            font=self._font(15, "semibold"),
-            image=self._ui_icon("sparkles", 18, "#FFFFFF", "#FFFFFF"), compound="left",
-            command=self.on_upscale_run, state="disabled",
+        self.up_btn = GradientButton(
+            card, text="Upscale Image", height=46, icon="sparkles",
+            busy_text="Upscaling", command=self.on_upscale_run, state="disabled",
         )
-        self.up_btn.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
+        self.up_btn.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 10))
 
         self.up_progress = ctk.CTkProgressBar(panel, height=8)
         self.up_progress.set(0)
@@ -2105,6 +2398,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         model = BG_MODELS.get(tier, BG_MODELS[DEFAULT_BG_TIER])[0]
         self._job_started()
         self.mq_btn.configure(state="disabled")
+        self.mq_btn.start_busy()
         self.mq_progress.grid()
         self._mq_fill_start()
         self.mq_status.configure(
@@ -2209,6 +2503,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             return
         self._job_started()
         self.up_btn.configure(state="disabled")
+        self.up_btn.start_busy()
         self.up_progress.grid()
         self.up_progress.configure(mode="determinate")
         self.up_progress.set(0)
@@ -2300,11 +2595,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         btnrow = ctk.CTkFrame(frame, fg_color="transparent")
         btnrow.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 8))
         btnrow.grid_columnconfigure(0, weight=1)
-        self.vg_btn = ctk.CTkButton(
-            btnrow, text=" Detect AI Text", height=46,
-            font=self._font(15, "semibold"),
-            image=self._ui_icon("shield-check", 18, "#FFFFFF", "#FFFFFF"), compound="left",
-            command=self.on_vanguard_detect,
+        self.vg_btn = GradientButton(
+            btnrow, text="Detect AI Text", height=46, icon="shield-check",
+            busy_text="Detecting", command=self.on_vanguard_detect,
         )
         self.vg_btn.grid(row=0, column=0, sticky="ew")
         self.vg_reset_btn = ctk.CTkButton(
@@ -2465,6 +2758,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         # reset progress + status + buttons
         self.vg_progress.grid_remove()
         self.vg_progress.set(0)
+        self.vg_btn.stop_busy()
         self.vg_btn.configure(state="normal")
         self.vg_upload_btn.configure(state="normal")
         self.vg_status.configure(text="Paste or upload text, then Detect.", text_color=MUTED)
@@ -2486,6 +2780,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._vg_detecting = True
         self._job_started()
         self.vg_btn.configure(state="disabled")
+        self.vg_btn.start_busy()
         self.vg_progress.grid()
         self.vg_progress.configure(mode="determinate")
         self.vg_progress.set(0)
@@ -2520,6 +2815,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vg_progress.grid_remove()
         self.vg_progress.set(0)
         self.vg_btn.configure(state="normal")
+        self.vg_btn.stop_busy(success=error is None)
         if error:
             self.vg_status.configure(text=f"✕  {error}", text_color=ERROR)
             return

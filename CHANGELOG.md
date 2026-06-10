@@ -5,6 +5,33 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v3.1.5 — 2026-06-10
+
+The action buttons go full dopamine.
+
+### Changed
+- **Every primary button is now the animated showpiece** — Convert Now,
+  Download (YouTube), Remove Background, Upscale Image, and Detect AI Text all
+  share one redesigned animated button:
+  - a **living lava gradient** that continuously flows through deep red →
+    ember orange → hot pink,
+  - a **comet** with a golden trail orbiting the button's border,
+  - **ember sparkles** that twinkle and rise off the surface,
+  - a **ripple** that bursts from the exact point you click,
+  - while working: flowing **candy stripes**, a double shine, and live
+    "Converting… / Downloading… / Removing… / Upscaling… / Detecting…" dots,
+  - and when a job finishes successfully — a **confetti burst with a white
+    flash**. You earned it.
+
+### Notes
+- Pure-UI release; no conversion behavior changed. The animation still pauses
+  when its page is hidden and goes to sleep after ~12 s without input, so the
+  extra flair costs nothing in the background. The busy state previously
+  dropped to grey mid-job — it now keeps the full color treatment, which is
+  exactly when the button should feel most alive.
+
+---
+
 ## v3.1 — 2026-06-10
 
 A full-codebase audit followed by a fix pass — no new tools, everything gets
