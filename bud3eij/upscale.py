@@ -1,11 +1,15 @@
-"""Image upscaling (Real-ESRGAN via onnxruntime) for Bu D3eij — a Marquee tool.
+"""Image upscaling (UltraSharp V2 via spandrel/PyTorch) for Bu D3eij — a Marquee tool.
 
 Upscales a low-quality image to an exact target resolution (1080p / 2K / 4K)
-using the `realesr-general-x4v3` super-resolution model, which produces clean,
-sharp, natural results on real-world (compressed/noisy) images. The model runs on
-the already-bundled `onnxruntime` (no PyTorch) and is downloaded & cached on first
-use, like the rembg models. If the model can't be loaded, it falls back to
-high-quality Lanczos resampling so the tool never hard-fails.
+using Kim2091's **UltraSharp V2** super-resolution models loaded through
+**spandrel** (the model loader ComfyUI/chaiNNer use) on **PyTorch CUDA** —
+GPU-fast on the RTX 3070 Ti, automatic CPU fallback elsewhere. v4.1 replaced
+the 2021-era Real-ESRGAN ONNX models after a measured A/B (PSNR on degraded
+test images): Fast = UltraSharp V2 **Lite** (RealPLKSR) beat even the old Max
+tier by ~1.8 dB at a fraction of the time; Max = UltraSharp V2 (DAT-2) is the
+overall quality winner (+2.6 dB over old Max). Models download once
+(SHA-256-verified) into ~/.bud3eij/models. If the model can't be loaded, it
+falls back to high-quality Lanczos resampling so the tool never hard-fails.
 
 After upscaling, the image is fit to the exact target with letterboxing (the whole
 image is preserved and padded with bars), so output is always exactly W x H.
@@ -29,21 +33,21 @@ TARGETS: dict[str, tuple[int, int]] = {
 DEFAULT_TARGET = "2K"
 
 # Upscaler quality tiers -> (model filename, download URL, one-line blurb, sha256).
-# Both expose float32 NCHW [0,1] I/O and upscale x4, so they share one inference
-# path. Each model downloads once to ~/.bud3eij/models and is cached thereafter.
+# Both are x4 models loaded via spandrel; they share one inference path. Each
+# model downloads once to ~/.bud3eij/models and is cached thereafter.
 _MODEL_DIR = Path.home() / ".bud3eij" / "models"
 UPSCALE_MODELS: dict[str, tuple[str, str, str, str]] = {
     "Fast": (
-        "realesr-general-x4v3.onnx",
-        "https://huggingface.co/OwlMaster/AllFilesRope/resolve/main/realesr-general-x4v3.onnx",
-        "Fastest · great on real low-quality photos (~4.7 MB)",
-        "09b757accd747d7e423c1d352b3e8f23e77cc5742d04bae958d4eb8082b76fa4",
+        "4x-UltraSharpV2_Lite.safetensors",
+        "https://huggingface.co/Kim2091/UltraSharpV2/resolve/main/4x-UltraSharpV2_Lite.safetensors",
+        "Sharp + fast · UltraSharp V2 Lite on the GPU (~28 MB)",
+        "7a330ef6b7c632477d311ac03499c91c350e35c5986d4a6c295f0628cb871a09",
     ),
     "Max": (
-        "RealESRGAN_x4plus.fp16.onnx",
-        "https://huggingface.co/OwlMaster/AllFilesRope/resolve/main/RealESRGAN_x4plus.fp16.onnx",
-        "Max detail · sharper textures, much slower on CPU (~34 MB)",
-        "0a06c68f463a14bf5563b78d77d61ba4394024e148383c4308d6d3783eac2dc5",
+        "4x-UltraSharpV2.safetensors",
+        "https://huggingface.co/Kim2091/UltraSharpV2/resolve/main/4x-UltraSharpV2.safetensors",
+        "Max fidelity · UltraSharp V2 (DAT-2) — best detail (~133 MB)",
+        "2b5db674aa8f3864a696dccd1d07d7cc0500fbf220f35044cd30eee9a7f971a7",
     ),
 }
 DEFAULT_UPSCALE_TIER = "Fast"
@@ -56,12 +60,19 @@ _SR_MIN_GAIN = 1.25  # below this fit scale a full x4 SR pass isn't worth the
                      # minutes of CPU + ~GB RAM it costs; plain Lanczos is enough
 _DOWNLOAD_TIMEOUT = 30  # socket timeout (s): a stalled download fails, not hangs
 
-_UPSCALE_SESSIONS: dict = {}  # tier -> onnxruntime session (model loaded once each)
+_UPSCALE_SESSIONS: dict = {}  # tier -> loaded spandrel model (loaded once each)
 
 
 def unload_models() -> None:
-    """Drop all cached upscaler sessions so their memory can be reclaimed."""
+    """Drop all cached upscaler models so their (GPU) memory can be reclaimed."""
     _UPSCALE_SESSIONS.clear()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001 - freeing memory must never raise
+        pass
 
 
 def _sha256(path: Path) -> str:
@@ -104,12 +115,17 @@ def _ensure_model(tier: str) -> Path:
 
 
 def _session(tier: str):
+    """Return the loaded spandrel model for `tier` (cached; CUDA if available)."""
     sess = _UPSCALE_SESSIONS.get(tier)
     if sess is None:
-        import onnxruntime as ort  # lazy: heavy
+        import torch  # lazy: heavy
+        from spandrel import ModelLoader
 
         path = _ensure_model(tier)
-        sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        desc = ModelLoader().load_from_file(str(path))
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        sess = desc.model.eval().to(device)
+        sess._bud3eij_device = device  # remembered for _run_tile
         _UPSCALE_SESSIONS[tier] = sess
     return sess
 
@@ -117,12 +133,14 @@ def _session(tier: str):
 def _run_tile(session, tile):
     """Run the model on one HxWx3 float32[0,1] tile; return the x4 HxWx3 result."""
     import numpy as np
+    import torch
 
-    inp = session.get_inputs()[0].name
-    x = tile.transpose(2, 0, 1)[None, ...]            # HWC -> 1CHW
-    y = session.run(None, {inp: x})[0]                # 1CHW (x4)
-    out = y[0].transpose(1, 2, 0)                     # -> HWC
-    return np.clip(out, 0.0, 1.0)
+    device = getattr(session, "_bud3eij_device", "cpu")
+    x = torch.from_numpy(tile.transpose(2, 0, 1)[None, ...].copy()).to(device)
+    with torch.no_grad():
+        y = session(x)
+    out = y[0].clamp(0.0, 1.0).permute(1, 2, 0).cpu().numpy()
+    return np.ascontiguousarray(out)
 
 
 def _sr_x4(session, img, on_tile=None):
@@ -188,9 +206,9 @@ def upscale_image(src, out_path=None, target: str = DEFAULT_TARGET,
     """Upscale `src` to an exact target resolution; return the output path.
 
     `target` is a key of `TARGETS` (1080p / 2K / 4K). `model` is an upscaler tier
-    in `UPSCALE_MODELS` (Fast = realesr-general-x4v3, Max = RealESRGAN_x4plus). The
-    image is super-resolved with Real-ESRGAN (enough x4 passes to exceed the fitted
-    size), then Lanczos-fit to exactly W x H — `fit="letterbox"` pads with bars,
+    in `UPSCALE_MODELS` (Fast = UltraSharp V2 Lite, Max = UltraSharp V2). The
+    image is super-resolved on the GPU when available (enough x4 passes to exceed
+    the fitted size), then Lanczos-fit to exactly W x H — `fit="letterbox"` pads with bars,
     `fit="crop"` fills the frame and trims the overflow. Output defaults to PNG
     (lossless); a chosen .jpg/.webp extension is honoured. With `overwrite` an
     explicitly chosen `out_path` is replaced (the GUI's save dialog already

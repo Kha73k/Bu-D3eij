@@ -2,9 +2,9 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-11 (v4.0 Sonara: audio stem splitter)_
+_Last updated: 2026-06-11 (v4.1 Marquee GPU models)_
 
-## Status: working app — v4.0 (Sonara Audio Stem Splitter; exe rebuild pending)
+## Status: working app — v4.1 (Marquee GPU upgrade; exe rebuild pending)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
@@ -25,6 +25,32 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-11 — v4.1: Marquee gets the GPU treatment (model audit follow-up)
+User request: audit every AI model and replace each with the best free local
+option, no accounts/APIs/limits — then implement the Marquee pair as v4.1.
+**`APP_VERSION = "4.1"`.** Both tools now ride the torch-CUDA stack v4.0
+introduced. New deps: spandrel (+ cu126 torchvision — pip's default is the CPU
+wheel, force-reinstall from the cu126 index), transformers, timm, kornia.
+- **Upscaler (`bud3eij/upscale.py`):** ONNX Real-ESRGAN → **UltraSharp V2 via
+  spandrel** on CUDA, same public API. Measured A/B (PSNR + crops on degraded
+  renders): Fast = `4x-UltraSharpV2_Lite` (RealPLKSR, 22.64 dB, ~78 ms GPU —
+  beats the old *Max* by ~1.8 dB), Max = `4x-UltraSharpV2` (DAT-2, 23.42 dB).
+  **Rejected after measuring:** ClearReality SPAN (fast but ringing artifacts,
+  ~20.3 dB) and 4xNomos8kHAT-L (slower AND worse here, 21.5 dB; its main repo
+  is also gated). SHA-256-pinned downloads unchanged in shape (4-tuples).
+- **BG remover Omega (`bud3eij/background.py`):** `birefnet-general` (onnx CPU)
+  → **BiRefNet_HR** (MIT, ZhengPeng7/BiRefNet_HR) on CUDA fp16 at 2048², via
+  transformers `trust_remote_code` with a **pinned revision**; cache
+  `HF_HOME=~/.bud3eij/models/hf`. Visual check: keeps individual hair strands
+  Flash deletes; ~1.4 s warm. **RMBG-2.0 rejected:** benchmark leader but the
+  HF repo is gated behind an account — violates the no-accounts rule (and
+  BiRefNet_HR beats it on hair). Flash/Mid stay rembg.
+- **Verified:** headless 60 checks (incl. new Omega + new upscaler contracts:
+  exact dims, pad/crop, overwrite, SR-skip) + GUI smoke 59 checks, all green;
+  tokenizers downgraded to 0.22.2 by transformers — Vanguard suite re-ran
+  clean. Build command gained `--collect-all
+  spandrel/transformers/timm/kornia/torchvision`. Exe rebuild on request.
 
 ### 2026-06-11 — v4.0: Sonara — Audio Stem Splitter (Demucs) + real-time mixer
 User request (`sonara_stem_splitter_prompt.md`): new sidebar section **Sonara**

@@ -142,6 +142,17 @@ with Image.open(bg_out) as im:
 r3 = remove_background(bg_src, bg_out, "u2netp")  # no overwrite -> ' (1)'
 check("bg default de-duplicates", r3 != bg_out, str(r3))
 
+# v4.1 Omega: BiRefNet_HR on torch/CUDA (first ever run downloads ~444 MB)
+print("\n[6b] background remover Omega (BiRefNet_HR)")
+hr_out = remove_background(bg_src, tmp / "subject_hr.png", "birefnet-hr",
+                           overwrite=True)
+with Image.open(hr_out) as im:
+    check("birefnet-hr output is RGBA", im.mode == "RGBA", im.mode)
+    import numpy as np
+    alpha = np.asarray(im)[:, :, 3]
+    check("birefnet-hr subject opaque", alpha[48, 48] > 200, str(alpha[48, 48]))
+    check("birefnet-hr corner transparent", alpha[3, 3] < 60, str(alpha[3, 3]))
+
 # ---- 7. vanguard: token-weighted scoring ------------------------------------
 print("\n[7] vanguard detect (loads the 1.7 GB model — slow first run)")
 from bud3eij.vanguard import detect_ai_text  # noqa: E402

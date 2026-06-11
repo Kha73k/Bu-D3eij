@@ -14,7 +14,9 @@ saved right next to the original.
 - Single-file **Converter** and a multi-file **Batch Convert** view
 - **YouTube** tab: paste a link and download it as MP4 (video) or MP3 (audio)
 - **Marquee** tab (image editing): **Background Remover** (transparent PNG, three
-  quality tiers) and **Image Upscaler** (Real-ESRGAN to exact 1080p / 2K / 4K)
+  quality tiers — the Omega tier runs BiRefNet-HR on the GPU for hair-strand
+  precision) and **Image Upscaler** (UltraSharp V2 on the GPU, to exact
+  1080p / 2K / 4K)
 - **Vanguard** tab (AI text tools): **AI Text Detector** (estimate how likely a
   text is AI-generated, with flagged passages), **Text Extraction** (offline OCR
   of any screenshot/photo, with copy-to-clipboard), and **What's The Font**
@@ -136,6 +138,8 @@ pyinstaller --noconfirm --windowed --name "Bu D3eij" `
   --collect-all tokenizers --collect-all rapidocr `
   --collect-all demucs --collect-all torch --collect-all torchaudio `
   --collect-all sounddevice --copy-metadata torch `
+  --collect-all spandrel --collect-all transformers --collect-all timm `
+  --collect-all kornia --collect-all torchvision `
   --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
@@ -203,4 +207,5 @@ Python 3.11 · customtkinter · tkinterdnd2 · Pillow · python-docx ·
 pdfplumber · reportlab · pdf2docx · python-pptx ·
 pymupdf4llm · mammoth · markdownify · yt-dlp · ffmpeg-python ·
 rembg · onnxruntime (Real-ESRGAN, DeBERTa detector, font classifier) ·
-rapidocr · tokenizers · demucs + PyTorch CUDA (stem splitter) · sounddevice
+rapidocr · tokenizers · demucs + PyTorch CUDA (stem splitter) · sounddevice ·
+spandrel (UltraSharp V2 upscaler) · transformers/timm/kornia (BiRefNet-HR)

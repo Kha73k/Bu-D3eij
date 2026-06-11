@@ -5,6 +5,34 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v4.1 — 2026-06-11
+
+The Marquee image tools get the same GPU treatment as Sonara — best-in-class
+local models, measured before being adopted. Still no accounts, no APIs,
+no limits.
+
+### Changed
+- **Image Upscaler rebuilt on UltraSharp V2.** Both tiers were replaced after a
+  measured comparison (the new **Fast** tier produces cleaner detail than the
+  old *Max* did, in a fraction of the time):
+  - **Fast** = UltraSharp V2 Lite — sharp, artifact-free, near-instant on GPU
+  - **Max** = UltraSharp V2 — the overall quality winner in our tests
+  Upscales now run on your NVIDIA GPU (automatic CPU fallback), so Max → 4K
+  takes seconds instead of ~10 minutes.
+- **Background Remover's Omega tier upgraded to BiRefNet-HR** — the current
+  open state of the art for cut-out quality, running on the GPU. The visible
+  difference: fine hair strands and wispy edges that the lighter tiers erase
+  are preserved. Flash and Mid are unchanged (instant, fully offline).
+
+### Notes
+- New models download once on first use (Fast ~28 MB, Max ~133 MB, Omega
+  ~444 MB) into the app's local cache, then everything is offline.
+- The stronger-on-paper RMBG-2.0 was evaluated and skipped: it requires a
+  HuggingFace account agreement (gated download), which breaks this app's
+  no-accounts rule — and BiRefNet-HR actually preserves hair better.
+
+---
+
 ## v4.0 — 2026-06-11
 
 A whole new direction: **Sonara**, the audio-tools section.

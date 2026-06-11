@@ -24,6 +24,9 @@ Marquee): AI Detector + two new image tools — **Text Extraction** (RapidOCR) a
 first tool is an **Audio Stem Splitter** (Demucs `htdemucs_ft` on **PyTorch
 CUDA** — the app's first torch dependency) with a real-time 4-stem playback
 mixer (`sounddevice`) — details inline below.
+**v4.1** gave both Marquee tools the same GPU treatment: the upscaler moved to
+**UltraSharp V2 via spandrel** and the bg remover's Omega tier to
+**BiRefNet_HR** — details inline below.
 
 ## Environment (important)
 - **Runtime is the Python 3.11 venv at `.venv`** — always use it:
@@ -47,8 +50,12 @@ mixer (`sounddevice`) — details inline below.
   https://download.pytorch.org/whl/cu126` (then `pip install -r` covers the
   rest). The machine's RTX 3070 Ti runs `htdemucs_ft` in seconds; a plain
   `pip install -r requirements.txt` on a fresh env would resolve the CPU torch
-  wheel instead — still works, ~20× slower. **Everything else stays on
-  onnxruntime — don't add torch dependencies outside Sonara.**
+  wheel instead — still works, ~20× slower. **v4.1 update:** torch is no longer
+  Sonara-only — the Marquee upscaler (spandrel) and the bg remover's Omega tier
+  (BiRefNet_HR via transformers) run on it too. `torchvision` must also be the
+  **cu126 build** (spandrel's pip pull grabs the CPU wheel — reinstall it from
+  the cu126 index with `--force-reinstall --no-deps`). Vanguard/OCR/fontid stay
+  on onnxruntime.
 
 ## Commands
 ```powershell
@@ -86,9 +93,19 @@ mixer (`sounddevice`) — details inline below.
   --collect-all tokenizers --collect-all rapidocr `
   --collect-all demucs --collect-all torch --collect-all torchaudio `
   --collect-all sounddevice --copy-metadata torch `
+  --collect-all spandrel --collect-all transformers --collect-all timm `
+  --collect-all kornia --collect-all torchvision `
   --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
+
+> **v4.1 Marquee GPU models build note — already applied above:**
+> `--collect-all spandrel/transformers/timm/kornia/torchvision` cover the new
+> upscaler loader and the BiRefNet_HR path (transformers needs its data files;
+> BiRefNet's pinned remote code imports timm + kornia + torchvision at
+> runtime). The UltraSharp V2 weights (~28 + ~133 MB) download SHA-256-verified
+> into `~/.bud3eij/models/`; BiRefNet_HR (~444 MB + code, revision-pinned)
+> lands in `HF_HOME = ~/.bud3eij/models/hf` — none are bundled.
 
 > **v4.0 Sonara (stem splitter) build note — already applied above:**
 > `--collect-all demucs` (it ships `remote/*.yaml` model manifests),
@@ -229,12 +246,18 @@ still apply; only the file a function lives in changed.
   Like `download_youtube` it sits **outside** `convert_file`/`CONVERSIONS` (no
   target-format choice). Sessions are cached per model in the module-level dict
   `_REMBG_SESSIONS` (each model loaded once). **v2.1** added a **QUALITY** tier
-  selector (`CTkSegmentedButton`) mapped by `BG_MODELS` (top of GUI section):
+  selector (`CTkSegmentedButton`) mapped by `BG_MODELS` (top of module):
   **Flash** = `u2netp` (fastest, ~4.7 MB), **Mid** (default `DEFAULT_BG_TIER`) =
-  `isnet-general-use` (balanced), **Omega** = `birefnet-general` (max precision,
-  big/slow). Each model downloads its own `.onnx` into `~/.u2net/` on first use,
-  then caches — **all three ride on the existing `--collect-all rembg` bundle, so
-  the build command does NOT change** (rebuild the exe only to embed new `app.py`).
+  `isnet-general-use` (balanced) — both rembg/onnx, downloading their `.onnx`
+  into `~/.u2net/` on first use. **Omega was upgraded in v4.1** to
+  **`birefnet-hr`** = the official **BiRefNet_HR** (MIT, ZhengPeng7/BiRefNet_HR)
+  on **torch CUDA** fp16 at 2048², loaded via `transformers`
+  `AutoModelForImageSegmentation(trust_remote_code=True)` with a **pinned
+  revision** (`BIREFNET_HR_REVISION`); weights+code cache in
+  `HF_HOME = ~/.bud3eij/models/hf`. Measured: keeps individual hair strands
+  that Flash deletes outright; ~1.4 s warm on the 3070 Ti (~8 s first load).
+  RMBG-2.0 scored higher overall in published benchmarks but is **gated behind
+  a HF account** — rejected (no-accounts rule); BiRefNet_HR beats it on hair.
   The bg-remover panel (`_build_mq_bgremover` + `_on_mq_model_change`/
   `on_marquee_drop`/`browse_marquee`/`set_marquee_file`/`on_marquee_remove`/
   `_marquee_worker`/`_marquee_done`) validates the drop is an image (`IMAGE_EXTS`),
@@ -248,23 +271,26 @@ still apply; only the file a function lives in changed.
   reuses the bundled `assets/ui/sparkles.png`. v3.1: `remove_background` gained
   `overwrite` (see Dispatch bullet) and `unload_models()` (clears
   `_REMBG_SESSIONS`; wired to the Tools "Unload AI models" button).
-- **Marquee → Image Upscaler (v2.3):** `upscale_image(src, out_path=None,
-  target="2K", model="Fast", fit="letterbox")` in `bud3eij/upscale.py` (lazy import)
-  super-resolves a low-quality image with **Real-ESRGAN** on the already-bundled
-  **onnxruntime** — *no PyTorch*. Runs enough ×4 passes (tiled, capped at ×16) to
-  exceed the fitted size, then Lanczos-fits + **letterboxes** to the exact `TARGETS`
-  resolution (1080p 1920×1080 / 2K 2560×1440 / 4K 3840×2160) — output is always
-  exactly W×H. Always saves (PNG default; honours a chosen `.jpg`/`.webp`), via
-  `unique_path`. Falls back to Lanczos if the model can't load (never hard-fails).
-  **QUALITY tiers** in `UPSCALE_MODELS` (`DEFAULT_UPSCALE_TIER = "Fast"`): **Fast** =
-  `realesr-general-x4v3` (~4.7 MB, SRVGGNetCompact, fast — best on real low-quality
-  photos), **Max** = `RealESRGAN_x4plus.fp16` (~34 MB, RRDBNet, sharper textures but
-  *much* slower on CPU — ~15× in tests). Both expose float32 NCHW [0,1] I/O + ×4, so
-  they share one inference path; sessions cached per tier in `_UPSCALE_SESSIONS`. Each
-  model downloads once to `~/.bud3eij/models/` (or a bundled `bud3eij/models/` copy
-  via `sys._MEIPASS`), then caches — **build command does NOT change** (onnxruntime/
-  numpy already collected; the module rides on the static `from bud3eij.upscale import
-  …`). GUI panel `_build_mq_upscaler` + `_on_up_model_change`/`on_upscale_drop`/
+- **Marquee → Image Upscaler (v2.3; engine replaced in v4.1):**
+  `upscale_image(src, out_path=None, target="2K", model="Fast",
+  fit="letterbox")` in `bud3eij/upscale.py` (lazy import) super-resolves a
+  low-quality image with **Kim2091's UltraSharp V2** models loaded through
+  **spandrel** on **torch CUDA** (auto CPU fallback). Runs enough ×4 passes
+  (tiled, capped at ×16) to exceed the fitted size, then Lanczos-fits +
+  **letterboxes** to the exact `TARGETS` resolution (1080p 1920×1080 / 2K
+  2560×1440 / 4K 3840×2160) — output is always exactly W×H. Always saves (PNG
+  default; honours a chosen `.jpg`/`.webp`), via `unique_path`. Falls back to
+  Lanczos if the model can't load (never hard-fails). **QUALITY tiers** in
+  `UPSCALE_MODELS` (`DEFAULT_UPSCALE_TIER = "Fast"`): **Fast** =
+  `4x-UltraSharpV2_Lite` (RealPLKSR, ~28 MB), **Max** = `4x-UltraSharpV2`
+  (DAT-2, ~133 MB). **Chosen by a measured A/B** (PSNR on degraded test
+  renders + visual crops): Lite beat the old ONNX *Max* by ~1.8 dB at a
+  fraction of its time, full V2 by ~2.6 dB; SPAN models (ClearReality) were
+  faster but artifact-prone, and HAT-L was slower AND worse — don't revisit
+  without re-measuring. Models cached per tier in `_UPSCALE_SESSIONS` (loaded
+  via `spandrel.ModelLoader`, device remembered on the model object); each
+  downloads once to `~/.bud3eij/models/` (or a bundled copy via
+  `sys._MEIPASS`). GUI panel `_build_mq_upscaler` + `_on_up_model_change`/`on_upscale_drop`/
   `browse_upscale`/`set_upscale_file`/`on_upscale_run`/`_upscale_worker`/
   `_set_up_progress`/`_upscale_done`; **QUALITY** (`self.up_model`, Fast/Max) +
   **TARGET** (`self.up_target`, 1080p/2K/4K) `CTkSegmentedButton`s. **Real filling
