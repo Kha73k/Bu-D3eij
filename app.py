@@ -59,6 +59,15 @@ from bud3eij.vanguard import (  # noqa: F401
 )
 from bud3eij.ocr import DEFAULT_OCR_TIER, OCR_MODELS, extract_text  # noqa: F401
 from bud3eij.fontid import identify_font  # noqa: F401
+from bud3eij.sonara import (  # noqa: F401
+    AUDIO_EXTS,
+    MODEL_NAME as SONARA_MODEL,
+    STEMS,
+    model_is_cached,
+    save_stem,
+    split_stems,
+)
+from bud3eij.stemplayer import StemPlayer  # noqa: F401
 
 
 def resource_path(rel: str) -> str:
@@ -155,7 +164,7 @@ def _setup_frozen_logging() -> None:
 # --------------------------------------------------------------------------- #
 APP_NAME = "Bu D3eij"
 NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "YouTube", "Marquee",
-             "Vanguard", "Tools"]
+             "Vanguard", "Sonara", "Tools"]
 
 # Logo-derived palette (extracted from AppLogo.png).
 RED = "#E11414"
@@ -179,7 +188,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "3.2"
+APP_VERSION = "4.0"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -199,7 +208,15 @@ def icon_key_for_ext(ext: str) -> str:
 NAV_ICONS = {
     "Home": "house", "Converter": "repeat", "Recent": "clock",
     "Batch Convert": "layers", "YouTube": "youtube", "Marquee": "sparkles",
-    "Vanguard": "shield-check", "Tools": "wrench",
+    "Vanguard": "shield-check", "Sonara": "audio-lines", "Tools": "wrench",
+}
+
+# Sonara stem rows: stem key -> (display name, assets/ui icon).
+SONARA_STEM_META = {
+    "vocals": ("Vocals", "mic"),
+    "drums": ("Drums", "drum"),
+    "bass": ("Bass", "guitar"),
+    "other": ("Other", "music"),
 }
 
 ctk.set_appearance_mode("Dark")
@@ -915,6 +932,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vanguard_file: Path | None = None
         self.vg_ocr_file: Path | None = None
         self.vg_font_file: Path | None = None
+        self.sonara_file: Path | None = None
+        self.sonara_player = None            # StemPlayer while stems are loaded
+        self.sonara_result: dict | None = None  # last split_stems result
         self.batch_export_dir: Path | None = None
         self.history: list[dict] = load_history()
         self.appearance_mode = "Dark"  # toggled by the sun/moon button
@@ -925,6 +945,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._convert_run = 0        # generation counter: Clear invalidates a run
         self._vg_run = 0             # generation counter: Reset invalidates a run
         self._vg_detecting = False   # a Vanguard detect worker is in flight
+        self._sn_run = 0             # generation counter for Sonara splits
+        self._sn_tick_after = None   # playback-position updater after() handle
+        self._sn_slider_drag = False # True while the tick loop writes the slider
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -1117,6 +1140,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             "YouTube": self._build_youtube(container),
             "Marquee": self._build_marquee(container),
             "Vanguard": self._build_vanguard(container),
+            "Sonara": self._build_sonara(container),
             "Home": self._build_home(container),
             "Recent": self._build_recent(container),
             "Tools": self._build_tools(container),
@@ -1138,6 +1162,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             "Its output may be incomplete.",
         ):
             return
+        if self.sonara_player is not None:  # release the audio device
+            self.sonara_player.close()
         self.destroy()
 
     def show_frame(self, name: str):
@@ -1379,13 +1405,14 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                 text="Can't unload while a job is running — try again when it finishes.",
                 text_color=WARNING)
             return
-        from bud3eij import background, fontid, ocr, upscale, vanguard
+        from bud3eij import background, fontid, ocr, sonara, upscale, vanguard
 
         background.unload_models()
         upscale.unload_models()
         vanguard.unload_models()
         ocr.unload_models()
         fontid.unload_models()
+        sonara.unload_models()
         import gc
 
         gc.collect()
@@ -3221,6 +3248,368 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                  f"closest of ~3,500 Google Fonts for {src.name}.",
             text_color=SUCCESS)
 
+    # ===================================================================== #
+    # Sonara — audio tools (stem splitter)
+    # ===================================================================== #
+    def _build_sonara(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(4, weight=1)  # player row grows
+        self._section_header(
+            frame, "Sonara",
+            "Audio tools — split a song into Vocals, Drums, Bass and Other.",
+        )
+
+        self.sn_drop_icon = self._ui_icon("audio-lines", 46, light=RED, dark=RED_BRIGHT)
+        dz = self._build_drop_zone(
+            frame, row=1, icon=self.sn_drop_icon,
+            title="Drag & drop a song here",
+            hint="or click to browse  ·  MP3 · WAV · FLAC · M4A · OGG · MP4",
+            on_drop=self.on_sonara_drop, on_click=self.browse_sonara, height=120,
+        )
+        self.sn_drop = dz["zone"]
+        self.sn_icon_label = dz["icon"]
+        self.sn_primary = dz["primary"]
+        self.sn_secondary = dz["secondary"]
+
+        self.sn_btn = GradientButton(
+            frame, text="Split Stems", height=46, icon="audio-lines",
+            busy_text="Splitting", command=self.on_sonara_split, state="disabled",
+        )
+        self.sn_btn.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 10))
+
+        self.sn_progress = ctk.CTkProgressBar(frame, height=8)
+        self.sn_progress.set(0)
+        self.sn_progress.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.sn_progress.grid_remove()  # only while splitting
+
+        # ---- player card (hidden until a split finishes) ----
+        self.sn_player_card = ctk.CTkFrame(frame, fg_color=CARD_SOFT, corner_radius=12)
+        self.sn_player_card.grid(row=4, column=0, sticky="new", padx=24, pady=(0, 8))
+        self.sn_player_card.grid_columnconfigure(0, weight=1)
+
+        transport = ctk.CTkFrame(self.sn_player_card, fg_color="transparent")
+        transport.grid(row=0, column=0, sticky="ew", padx=18, pady=(12, 2))
+        transport.grid_columnconfigure(1, weight=1)
+        self.sn_play_btn = ctk.CTkButton(
+            transport, text=self.PLAY_GLYPH, width=46, height=34,
+            font=ctk.CTkFont(family="Segoe UI Symbol", size=16),
+            fg_color=RED, hover_color=RED_HOVER,
+            command=self._sn_toggle_play,
+        )
+        self.sn_play_btn.grid(row=0, column=0)
+        self.sn_seek = ctk.CTkSlider(transport, from_=0, to=1000,
+                                     command=self._sn_on_seek)
+        self.sn_seek.set(0)
+        self.sn_seek.grid(row=0, column=1, sticky="ew", padx=(14, 14))
+        self.sn_time = ctk.CTkLabel(transport, text="0:00 / 0:00",
+                                    text_color=MUTED, width=92, anchor="e")
+        self.sn_time.grid(row=0, column=2)
+
+        # ---- 4 stem rows: icon · name · M · S · volume · Save ----
+        self.sn_rows: dict[str, dict] = {}
+        for i, (stem, (label, icon)) in enumerate(SONARA_STEM_META.items()):
+            row = ctk.CTkFrame(self.sn_player_card, fg_color="transparent")
+            row.grid(row=1 + i, column=0, sticky="ew", padx=18, pady=4)
+            row.grid_columnconfigure(3, weight=1)
+            ctk.CTkLabel(row, text="", width=26,
+                         image=self._ui_icon(icon, 20)).grid(row=0, column=0)
+            ctk.CTkLabel(row, text=label, width=66, anchor="w",
+                         font=self._font(14, "semibold")).grid(row=0, column=1,
+                                                               padx=(6, 4))
+            mute = ctk.CTkButton(
+                row, text="M", width=30, height=28,
+                font=self._font(12, "semibold"),
+                fg_color="transparent", border_width=1, border_color=MUTED,
+                text_color=NAV_TEXT, hover_color=("#EBE0E1", "#2A2426"),
+                command=lambda s=stem: self._sn_toggle_mute(s),
+            )
+            mute.grid(row=0, column=2, padx=(0, 4))
+            solo = ctk.CTkButton(
+                row, text="S", width=30, height=28,
+                font=self._font(12, "semibold"),
+                fg_color="transparent", border_width=1, border_color=MUTED,
+                text_color=NAV_TEXT, hover_color=("#EBE0E1", "#2A2426"),
+                command=lambda s=stem: self._sn_toggle_solo(s),
+            )
+            solo.grid(row=0, column=3, sticky="w")
+            vol = ctk.CTkSlider(row, from_=0, to=100, width=230,
+                                command=lambda v, s=stem: self._sn_set_volume(s, v))
+            vol.set(100)
+            vol.grid(row=0, column=4, padx=(10, 10), sticky="e")
+            save = ctk.CTkButton(
+                row, text="Save", width=64, height=28,
+                command=lambda s=stem: self.on_sn_save_stem(s),
+            )
+            save.grid(row=0, column=5)
+            self.sn_rows[stem] = {"mute": mute, "solo": solo,
+                                  "volume": vol, "save": save}
+
+        ctk.CTkLabel(
+            self.sn_player_card,
+            text="M mutes a stem in the mix · S plays only the soloed stem(s) · "
+                 "Save exports a stem next to the original song.",
+            text_color=MUTED, anchor="w", justify="left", wraplength=620,
+            font=ctk.CTkFont(size=11),
+        ).grid(row=5, column=0, sticky="ew", padx=18, pady=(4, 12))
+        self.sn_player_card.grid_remove()
+
+        self.sn_status = ctk.CTkLabel(
+            frame, text="Drop a song to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.sn_status.grid(row=5, column=0, sticky="w", padx=24, pady=(2, 10))
+        return frame
+
+    PLAY_GLYPH = "▶"
+    PAUSE_GLYPH = "⏸"
+
+    @staticmethod
+    def _fmt_time(seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        return f"{seconds // 60}:{seconds % 60:02d}"
+
+    # ---- sonara: file selection ------------------------------------------- #
+    def on_sonara_drop(self, event):
+        paths = self._parse_drop(event)
+        if paths:
+            self.set_sonara_file(paths[0])
+
+    def browse_sonara(self):
+        path = self._ask_open(
+            "sonara", title="Select a song",
+            filetypes=[("Audio", "*.mp3 *.wav *.flac *.m4a *.aac *.ogg *.opus "
+                                 "*.wma *.aiff *.mp4 *.webm *.mkv"),
+                       ("All files", "*.*")],
+        )
+        if path:
+            self.set_sonara_file(Path(path))
+
+    def set_sonara_file(self, path: Path):
+        if not path.is_file():
+            self.sn_status.configure(text=self._not_a_file_message(path),
+                                     text_color=WARNING)
+            return
+        ext = detect_format(path)
+        self.sn_primary.configure(text=path.name)
+        if ext not in AUDIO_EXTS:
+            self.sn_icon_label.configure(image=self.sn_drop_icon)
+            self.sn_secondary.configure(text="Not an audio file  ·  click to choose another")
+            self.sn_btn.configure(state="disabled")
+            self.sn_status.configure(
+                text=f"Unsupported file: .{ext or '?'} — pick an audio file.",
+                text_color=WARNING)
+            self.sonara_file = None
+            return
+        ft_icon = self._filetype_icon(ext, 52)
+        if ft_icon is not None:
+            self.sn_icon_label.configure(image=ft_icon)
+        try:
+            size = human_size(path.stat().st_size)
+        except OSError:
+            size = "?"
+        self.sn_secondary.configure(text=f"Audio  ·  {size}  ·  click to choose another")
+        self.sn_btn.configure(state="normal")
+        self.sn_status.configure(text=f"Ready to split {path.name} into 4 stems.",
+                                 text_color=MUTED)
+        self.sonara_file = path
+
+    # ---- sonara: splitting -------------------------------------------------- #
+    def on_sonara_split(self):
+        src = self.sonara_file
+        if not src:
+            return
+        self._sn_run += 1
+        run = self._sn_run
+        self._sn_close_player()  # stop + drop any previous mix
+        self.sn_player_card.grid_remove()
+        self._job_started()
+        self.sn_btn.configure(state="disabled")
+        self.sn_btn.start_busy()
+        self.sn_progress.grid()
+        self.sn_progress.configure(mode="determinate")
+        self.sn_progress.set(0)
+        first_run = ("  ·  First run: downloading the Demucs model (~320 MB, "
+                     "one-time)…" if not model_is_cached() else "")
+        self.sn_status.configure(
+            text=f"Splitting {src.name} with {SONARA_MODEL}…{first_run}",
+            text_color=MUTED)
+        threading.Thread(target=self._sonara_worker, args=(src, run),
+                         daemon=True).start()
+
+    def _sonara_worker(self, src: Path, run: int):
+        def on_progress(frac: float):
+            self.after(0, self._set_sn_progress, frac, run)
+
+        try:
+            result = split_stems(src, progress=on_progress)
+            self.after(0, self._sonara_done, src, result, None, run)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._sonara_done, src, None, exc, run)
+
+    def _set_sn_progress(self, frac: float, run: int):
+        if run != self._sn_run:
+            return
+        self.sn_progress.set(max(0.0, min(1.0, frac)))
+        self.sn_status.configure(text=f"Splitting…  {int(frac * 100)}%",
+                                 text_color=MUTED)
+
+    def _sonara_done(self, src: Path, result: dict | None,
+                     error: Exception | None, run: int):
+        self._job_finished()
+        if run != self._sn_run:
+            return  # a newer split superseded this one
+        self.sn_progress.grid_remove()
+        self.sn_progress.set(0)
+        self.sn_btn.configure(state="normal")
+        self.sn_btn.stop_busy(success=error is None)
+        if error:
+            self.sn_status.configure(text=f"✕  {error}", text_color=ERROR)
+            return
+        self.sonara_result = result
+        self.sonara_player = StemPlayer(result["stems"], result["samplerate"])
+        # reset the mixer UI to a clean state
+        for stem, row in self.sn_rows.items():
+            row["volume"].set(100)
+            self._sn_style_toggle(row["mute"], False)
+            self._sn_style_toggle(row["solo"], False)
+        self.sn_seek.set(0)
+        self.sn_play_btn.configure(text=self.PLAY_GLYPH)
+        self.sn_time.configure(
+            text=f"0:00 / {self._fmt_time(result['duration'])}")
+        self.sn_player_card.grid()
+        device = "GPU" if result["device"] == "cuda" else "CPU"
+        self.sn_status.configure(
+            text=f"✓  Split {src.name} into 4 stems on the {device} · play the mix, "
+                 "tweak M/S/volume, and Save the stems you want.",
+            text_color=SUCCESS)
+
+    # ---- sonara: playback ---------------------------------------------------- #
+    def _sn_close_player(self):
+        self._sn_stop_tick()
+        if self.sonara_player is not None:
+            self.sonara_player.close()
+            self.sonara_player = None
+        self.sonara_result = None
+
+    def _sn_toggle_play(self):
+        player = self.sonara_player
+        if player is None:
+            return
+        player.toggle()
+        if player.is_playing:
+            self.sn_play_btn.configure(text=self.PAUSE_GLYPH)
+            self._sn_tick()
+        else:
+            self.sn_play_btn.configure(text=self.PLAY_GLYPH)
+            self._sn_stop_tick()
+
+    def _sn_stop_tick(self):
+        if self._sn_tick_after is not None:
+            self.after_cancel(self._sn_tick_after)
+            self._sn_tick_after = None
+
+    def _sn_tick(self):
+        self._sn_tick_after = None
+        player = self.sonara_player
+        if player is None:
+            return
+        frac = player.position / player.duration if player.duration else 0.0
+        self._sn_slider_drag = True
+        self.sn_seek.set(frac * 1000)
+        self._sn_slider_drag = False
+        self.sn_time.configure(
+            text=f"{self._fmt_time(player.position)} / {self._fmt_time(player.duration)}")
+        if player.finished or not player.is_playing:
+            self.sn_play_btn.configure(text=self.PLAY_GLYPH)
+            return
+        self._sn_tick_after = self.after(100, self._sn_tick)
+
+    def _sn_on_seek(self, value: float):
+        if self._sn_slider_drag:  # the tick loop is writing the slider, not the user
+            return
+        player = self.sonara_player
+        if player is None:
+            return
+        player.seek(float(value) / 1000.0)
+        self.sn_time.configure(
+            text=f"{self._fmt_time(player.position)} / {self._fmt_time(player.duration)}")
+
+    def _sn_style_toggle(self, button, active: bool):
+        button.configure(
+            fg_color=RED if active else "transparent",
+            text_color="#FFFFFF" if active else NAV_TEXT,
+            border_color=RED if active else MUTED,
+        )
+
+    def _sn_toggle_mute(self, stem: str):
+        player = self.sonara_player
+        if player is None:
+            return
+        muted = not player.muted[stem]
+        player.set_mute(stem, muted)
+        self._sn_style_toggle(self.sn_rows[stem]["mute"], muted)
+
+    def _sn_toggle_solo(self, stem: str):
+        player = self.sonara_player
+        if player is None:
+            return
+        soloed = not player.soloed[stem]
+        player.set_solo(stem, soloed)
+        self._sn_style_toggle(self.sn_rows[stem]["solo"], soloed)
+
+    def _sn_set_volume(self, stem: str, value: float):
+        if self.sonara_player is not None:
+            self.sonara_player.set_volume(stem, float(value) / 100.0)
+
+    # ---- sonara: saving stems ------------------------------------------------ #
+    def on_sn_save_stem(self, stem: str):
+        result, src = self.sonara_result, self.sonara_file
+        if not result or not src:
+            return
+        out = self._ask_save(
+            "sonara_save",
+            title=f"Save the {SONARA_STEM_META[stem][0]} stem as",
+            defaultextension=".wav",
+            initialdir=str(src.parent),
+            initialfile=f"{src.stem}_{stem}.wav",
+            filetypes=[("WAV audio", "*.wav"), ("MP3 audio", "*.mp3")],
+        )
+        if not out:
+            self.sn_status.configure(text="Cancelled (no save location chosen).",
+                                     text_color=MUTED)
+            return
+        self._job_started()
+        self.sn_rows[stem]["save"].configure(state="disabled")
+        self.sn_status.configure(text=f"Saving the {stem} stem…", text_color=MUTED)
+        threading.Thread(
+            target=self._sn_save_worker,
+            args=(stem, result["stems"][stem], result["samplerate"], Path(out)),
+            daemon=True,
+        ).start()
+
+    def _sn_save_worker(self, stem: str, array, samplerate: int, out: Path):
+        try:
+            # overwrite=True: the save dialog already confirmed replacing `out`.
+            saved = save_stem(array, samplerate, out, overwrite=True)
+            self.after(0, self._sn_save_done, stem, saved, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._sn_save_done, stem, None, exc)
+
+    def _sn_save_done(self, stem: str, out: Path | None, error: Exception | None):
+        self._job_finished()
+        self.sn_rows[stem]["save"].configure(state="normal")
+        if error:
+            self.sn_status.configure(text=f"✕  {error}", text_color=ERROR)
+            if self.sonara_file:
+                self.add_history(self.sonara_file, None, False, error)
+            return
+        self.sn_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
+        if self.sonara_file:
+            self.add_history(self.sonara_file, out, True)
+
 
 def _run_cli(args) -> int:
     """Headless mode: --convert, --download, --remove-bg, --upscale, --detect,
@@ -3257,6 +3646,11 @@ def _run_cli(args) -> int:
     parser.add_argument(
         "--identify-font", metavar="FILE",
         help="Identify the font in an image (top-5 Google Font matches) and exit.",
+    )
+    parser.add_argument(
+        "--split-stems", metavar="FILE",
+        help="Split an audio file into 4 stems (vocals/drums/bass/other), "
+             "save them as WAVs next to it, and exit.",
     )
     ns = parser.parse_args(args)
     if ns.convert:
@@ -3332,6 +3726,20 @@ def _run_cli(args) -> int:
             for m in r["matches"]:
                 print(f"{m['prob']:6.1%}  {m['name']}")
             print(f"(closest matches · {r['model']})")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.split_stems:
+        try:
+            src = Path(ns.split_stems)
+            r = split_stems(src, progress=lambda f: print(
+                f"\r{int(f * 100):3d}%", end="", flush=True))
+            print()
+            for stem, arr in r["stems"].items():
+                out = save_stem(arr, r["samplerate"],
+                                src.with_name(f"{src.stem}_{stem}.wav"))
+                print(f"Saved: {out}")
             return 0
         except Exception as exc:  # noqa: BLE001
             print(f"Error: {exc}", file=sys.stderr)

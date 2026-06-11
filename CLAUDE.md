@@ -20,6 +20,10 @@ fixes, shared panel helpers, and an in-repo `tests/` suite — details inline be
 **v3.2** turns **Vanguard into a multi-tool page** (same switcher pattern as
 Marquee): AI Detector + two new image tools — **Text Extraction** (RapidOCR) and
 **What's The Font** (Storia font-classify) — details inline below.
+**v4.0** opens a third direction — an audio-tools area called **Sonara**; its
+first tool is an **Audio Stem Splitter** (Demucs `htdemucs_ft` on **PyTorch
+CUDA** — the app's first torch dependency) with a real-time 4-stem playback
+mixer (`sounddevice`) — details inline below.
 
 ## Environment (important)
 - **Runtime is the Python 3.11 venv at `.venv`** — always use it:
@@ -37,6 +41,14 @@ Marquee): AI Detector + two new image tools — **Text Extraction** (RapidOCR) a
   text-only fallback.
 - **Microsoft PowerPoint** (if installed) is used for PPTX→PDF via COM
   (`win32com.client` + `SaveAs(..., 32)`); `reportlab` is the text-only fallback.
+- **PyTorch is CUDA (cu126)** for Sonara/Demucs — installed **separately from
+  requirements.txt** because it needs the PyTorch index:
+  `.\.venv\Scripts\python -m pip install torch torchaudio --index-url
+  https://download.pytorch.org/whl/cu126` (then `pip install -r` covers the
+  rest). The machine's RTX 3070 Ti runs `htdemucs_ft` in seconds; a plain
+  `pip install -r requirements.txt` on a fresh env would resolve the CPU torch
+  wheel instead — still works, ~20× slower. **Everything else stays on
+  onnxruntime — don't add torch dependencies outside Sonara.**
 
 ## Commands
 ```powershell
@@ -52,6 +64,9 @@ Marquee): AI Detector + two new image tools — **Text Extraction** (RapidOCR) a
 # Headless OCR / font identification (also work on the exe)
 .\.venv\Scripts\python app.py --extract-text "C:\path\screenshot.png"
 .\.venv\Scripts\python app.py --identify-font "C:\path\text.png"
+
+# Headless stem splitting -> 4 WAVs next to the source (also works on the exe)
+.\.venv\Scripts\python app.py --split-stems "C:\path\song.mp3"
 
 # Install / update deps
 .\.venv\Scripts\python -m pip install -r requirements.txt
@@ -69,9 +84,21 @@ Marquee): AI Detector + two new image tools — **Text Extraction** (RapidOCR) a
   --collect-all yt_dlp `
   --collect-all rembg --collect-all onnxruntime --copy-metadata pymatting --copy-metadata rembg `
   --collect-all tokenizers --collect-all rapidocr `
+  --collect-all demucs --collect-all torch --collect-all torchaudio `
+  --collect-all sounddevice --copy-metadata torch `
   --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
+
+> **v4.0 Sonara (stem splitter) build note — already applied above:**
+> `--collect-all demucs` (it ships `remote/*.yaml` model manifests),
+> `--collect-all torch --collect-all torchaudio --copy-metadata torch` (the CUDA
+> DLLs ride inside `torch/lib` — the exe folder grows to **~6 GB** and the build
+> takes much longer; this is a personal build, disk-only cost), and
+> `--collect-all sounddevice` (bundles the PortAudio DLL). The Demucs
+> checkpoints (4 × ~80 MB) are **not bundled** — they download once via
+> torch.hub into `TORCH_HOME = ~/.bud3eij/models/torch` (set by
+> `bud3eij/sonara.py` before the lazy demucs import).
 
 > **v3.2 Vanguard tools (OCR + font ID) build note — already applied above:**
 > `--collect-all rapidocr` was added: Text Extraction uses the **`rapidocr`** pip
@@ -116,9 +143,11 @@ Marquee): AI Detector + two new image tools — **Text Extraction** (RapidOCR) a
   python: `tests\test_headless.py` (format model, conversions incl. animated
   GIF, ffmpeg error truncation, upscaler fits/overwrite/SR-threshold,
   bg-remover overwrite, vanguard scoring, OCR text extraction, font ID,
-  history validation — loads the Vanguard model, so the first run is slow),
-  `tests\test_gui_smoke.py` (all
-  frames + the v3.1 widgets/counters + the v3.2 Vanguard switcher/panels),
+  sonara stem split + StemPlayer mix math,
+  history validation — loads the Vanguard + Demucs models, so the first run is
+  slow), `tests\test_gui_smoke.py` (all
+  frames + the v3.1 widgets/counters + the v3.2 Vanguard switcher/panels + the
+  v4.0 Sonara page/stub-player toggles),
   `tests\test_com_paths.py` (direct-Word
   DOCX→PDF incl. the no-WINWORD-leak check, owned-PowerPoint PPTX→PDF; needs
   Office installed).
@@ -343,6 +372,51 @@ still apply; only the file a function lives in changed.
   Zero lines found is a WARNING status, not an error. No history entries (like
   the detector — nothing is saved to disk). Panel icon `assets/ui/scan-text.png`.
   CLI: `--extract-text FILE [TIER]` (Fast/Max, prints the text).
+- **Sonara = the audio-tools page (v4.0); first tool: Audio Stem Splitter.**
+  `split_stems(src, progress=None)` in `bud3eij/sonara.py` (lazy import) splits a
+  song into **vocals / drums / bass / other** with **Demucs `htdemucs_ft`** (a
+  fine-tuned *bag of 4* Hybrid Transformer models — best open quality) on
+  **PyTorch CUDA** (`device="cuda" if available else "cpu"`; seconds per song on
+  the 3070 Ti, ~20 min on CPU). **PyPI demucs (4.0.1, pinned) predates
+  `demucs.api`**, so the module drives `pretrained.get_model` + per-submodel
+  `apply_model` directly (mirroring BagOfModels weight-averaging) and injects a
+  lazy **`_CountingPool`** for real segment-level progress (apply_model submits
+  every segment up front, executes lazily in `result()` — done/submitted is the
+  fraction; pool/job params are **positional-only** because demucs forwards its
+  own `pool=` inside the kwargs). Audio is decoded via its own `_load_audio`
+  (ffmpeg `AudioFile` → torchaudio fallback) because demucs' `load_track`
+  **`sys.exit`s** on failure. Returns GUI-agnostic `{"stems": {name: float32
+  (N,2) ndarray}, "samplerate", "duration", "model", "device"}`. `save_stem`
+  writes WAV via the **stdlib `wave`** module (torchaudio 2.11 delegated
+  `ta.save` to the separate torchcodec pkg — not worth a dep) and MP3 via
+  demucs' lameenc `encode_mp3`; same `overwrite` contract as the other tools.
+  Checkpoints download once to `TORCH_HOME = ~/.bud3eij/models/torch`;
+  `model_is_cached()` drives the one-time first-run download warning;
+  `unload_models()` frees the model + `torch.cuda.empty_cache()` (Tools button).
+  **Playback — `bud3eij/stemplayer.py`:** `StemPlayer(stems, samplerate)` mixes
+  all stems through **one `sounddevice.OutputStream`** (a single clock = no
+  drift; gain changes apply next ~23 ms block). Solo semantics are standard DAW:
+  any solo → only soloed stems audible, else non-muted stems at their volume.
+  The gain/mix math lives in `_gains()`/`_mix_block()` (pure numpy — unit-tested
+  without an audio device). `play/pause/toggle`, `seek(frac)`, `position`,
+  `finished` flag (callback raises `CallbackStop` at end; the GUI tick poll
+  flips the ▶ button back), `close()` releases the device (wired into
+  `_on_close`). Note: Bluetooth sinks take ~1 s to wake before position advances.
+  GUI page `_build_sonara` (attrs `sn_*`): drop zone (AUDIO_EXTS incl. mp4/webm
+  — ffmpeg uses the audio track) → **Split Stems** GradientButton → real
+  progress bar + live % → **player card** (hidden until done): ▶/⏸ (`PLAY_GLYPH`/
+  `PAUSE_GLYPH`, Segoe UI Symbol), seek slider (0-1000; `_sn_slider_drag` flag
+  stops the 100 ms `_sn_tick` updater's writes from re-triggering seek), time
+  label, and 4 stem rows (icon `mic`/`drum`/`guitar`/`music` via
+  `SONARA_STEM_META` + name + **M**/**S** toggles (red when active,
+  `_sn_style_toggle`) + volume slider 0-100 + per-stem **Save** →
+  `_ask_save("sonara_save")`, wav/mp3, worker + `add_history`). Handlers
+  `on_sonara_drop/browse_sonara/set_sonara_file/on_sonara_split/_sonara_worker/
+  _set_sn_progress/_sonara_done/_sn_toggle_play/_sn_tick/_sn_on_seek/
+  _sn_toggle_mute/_sn_toggle_solo/_sn_set_volume/on_sn_save_stem/
+  _sn_save_worker/_sn_save_done`; `_sn_run` generation counter; a new split
+  `_sn_close_player()`s the old mix (~340 MB RAM for a 4-min song). Nav icon
+  `assets/ui/audio-lines.png`. CLI: `--split-stems FILE` (4 WAVs next to it).
 - **Vanguard → What's The Font (v3.2):** `identify_font(src, top_k=5)` in
   `bud3eij/fontid.py` (lazy import) classifies the lettering in an image against
   **~3,500 Google Fonts** with `storia/font-classify-onnx` (EfficientNet-B3, MIT)
@@ -397,10 +471,10 @@ still apply; only the file a function lives in changed.
   - The Recent table only refreshes when it's the visible frame
     (`self._current_frame`, set by `show_frame`); Tools stats refresh on show
     (`_refresh_tools`); a bare file argument to the exe preloads the Converter.
-- **Animated action buttons (`GradientButton`, redesigned v3.1.5):** all seven
+- **Animated action buttons (`GradientButton`, redesigned v3.1.5):** all eight
   primary CTAs — Converter "Convert Now", YouTube "Download", Marquee "Remove
   Background" + "Upscale Image", Vanguard "Detect AI Text" + "Extract Text"
-  + "Identify Font" (the last two added v3.2) — are the same
+  + "Identify Font" (v3.2), Sonara "Split Stems" (v4.0) — are the same
   custom `GradientButton(ctk.CTkFrame)` (defined just above `class App`), not
   `CTkButton`s. CustomTkinter has no CSS, so the whole visual is **composed in
   Pillow** and animated by swapping a `CTkImage` on an inner label each tick.
@@ -413,8 +487,8 @@ still apply; only the file a function lives in changed.
   white flash** (`_celebrate` — the payoff; `_job_done` passes
   `success=error is None`). Busy = lava + **flowing diagonal candy stripes** +
   double shine + animated `busy_text` dots (per-button: Converting /
-  Downloading / Removing / Upscaling / Detecting / Extracting / Identifying);
-  `icon=` names an
+  Downloading / Removing / Upscaling / Detecting / Extracting / Identifying /
+  Splitting); `icon=` names an
   `assets/ui/*.png` tinted white. Drop-in API: `grid`, `command`,
   `configure(state=…)`, `start_busy()`/`stop_busy(success=…)`. Static layers
   cache by `(w, h, alive)` where **alive = enabled or busy** (a running button
@@ -472,8 +546,9 @@ still apply; only the file a function lives in changed.
   `--download URL FORMAT` (mp3/mp4, saves to cwd), `--remove-bg FILE [TIER]`
   (transparent PNG next to the source; TIER = Flash/Mid/Omega, default Mid),
   `--upscale FILE [TARGET]` (1080p/2K/4K, default 2K), `--detect FILE`,
-  `--extract-text FILE [TIER]` (Fast/Max, prints the OCR'd text), and
-  `--identify-font FILE` (prints the top-5 font matches) run
+  `--extract-text FILE [TIER]` (Fast/Max, prints the OCR'd text),
+  `--identify-font FILE` (prints the top-5 font matches), and
+  `--split-stems FILE` (saves the 4 stem WAVs next to the source) run
   headless; extra positional args are rejected with a clear `parser.error`.
   No flags → GUI; a **bare file argument** (e.g. a file dragged onto the exe)
   opens the GUI with the Converter preloaded. All of these double as the way to
@@ -566,6 +641,8 @@ bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
   vanguard.py     detect_ai_text + CONFIDENCE_TIERS (Vanguard AI text detector)
   ocr.py          extract_text (Vanguard Text Extraction, RapidOCR)
   fontid.py       identify_font + FONTID_FILES (Vanguard What's The Font)
+  sonara.py       split_stems + save_stem + STEMS (Sonara stem splitter, Demucs)
+  stemplayer.py   StemPlayer (real-time 4-stem mixer on sounddevice)
 requirements.txt  runtime deps (pyinstaller is dev-only, installed separately)
 README.md         user-facing docs
 CLAUDE.md         this file

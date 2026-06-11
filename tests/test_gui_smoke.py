@@ -31,7 +31,7 @@ a.update()
 for name in app.NAV_ITEMS:
     a.show_frame(name)
     a.update()
-check("all 8 frames switch", True)
+check("all 9 frames switch", True)
 check("_current_frame tracks", a._current_frame == app.NAV_ITEMS[-1], a._current_frame)
 
 # new widgets exist
@@ -119,14 +119,43 @@ check("ocr tier caption updates",
       "English" in a.vgo_model_caption.cget("text"))
 check("font has 5 result rows", len(a.vgf_rows) == 5)
 
-# v3.1.5/v3.2: all seven action buttons share the animated GradientButton design
+# v4.0: Sonara page — stem rows, hidden player card, stub-player toggles
+import numpy as np  # noqa: E402
+
+a.show_frame("Sonara")
+a.update()
+check("sonara nav present", "Sonara" in app.NAV_ITEMS)
+check("sonara player card hidden initially",
+      a.sn_player_card.winfo_manager() == "")
+check("sonara 4 stem rows", set(a.sn_rows) == set(app.STEMS), str(set(a.sn_rows)))
+check("sonara rows complete",
+      all({"mute", "solo", "volume", "save"} <= set(r) for r in a.sn_rows.values()))
+stub = {s: np.zeros((1000, 2), dtype=np.float32) for s in app.STEMS}
+a.sonara_player = app.StemPlayer(stub, 44100)
+a._sn_toggle_mute("drums")
+check("mute toggles player state", a.sonara_player.muted["drums"])
+a._sn_toggle_solo("vocals")
+check("solo toggles player state", a.sonara_player.soloed["vocals"])
+a._sn_set_volume("bass", 50)
+check("volume slider maps 0-100 to 0-1", a.sonara_player.volume["bass"] == 0.5)
+check("time formatter", app.App._fmt_time(83) == "1:23", app.App._fmt_time(83))
+a.sonara_player.close()
+a.sonara_player = None
+
+# non-audio file rejected by the Sonara drop
+a.set_sonara_file(f)  # the txt from the converter check
+check("sonara rejects non-audio",
+      "Unsupported" in a.sn_status.cget("text"), a.sn_status.cget("text"))
+
+# v3.1.5/v3.2/v4.0: all eight action buttons share the animated GradientButton design
 for name, btn, busy in [("convert", a.convert_btn, "Converting"),
                         ("youtube", a.yt_btn, "Downloading"),
                         ("bg-remover", a.mq_btn, "Removing"),
                         ("upscaler", a.up_btn, "Upscaling"),
                         ("vanguard", a.vg_btn, "Detecting"),
                         ("vg-ocr", a.vgo_btn, "Extracting"),
-                        ("vg-font", a.vgf_btn, "Identifying")]:
+                        ("vg-font", a.vgf_btn, "Identifying"),
+                        ("sonara", a.sn_btn, "Splitting")]:
     check(f"{name} button is a GradientButton",
           isinstance(btn, app.GradientButton))
     check(f"{name} busy text", getattr(btn, "_busy_text", "") == busy,

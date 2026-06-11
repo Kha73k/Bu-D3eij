@@ -2,9 +2,9 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-10 (v3.2 Vanguard multi-tool: OCR + font ID)_
+_Last updated: 2026-06-11 (v4.0 Sonara: audio stem splitter)_
 
-## Status: working app + standalone exe — v3.2 (Vanguard Text Extraction + What's The Font)
+## Status: working app — v4.0 (Sonara Audio Stem Splitter; exe rebuild pending)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
@@ -17,13 +17,53 @@ Marquee / Background Remover (rembg); v2.1 = Marquee Flash/Mid/Omega model selec
 v2.2 = split the logic into a `bud3eij/` package; v2.3 = Marquee Image Upscaler
 (Real-ESRGAN); v2.3.5 = Marquee filling progress bars; **v3.0 = Vanguard AI Text
 Detector (desklib DeBERTa-v3-large on onnxruntime)**; v3.1 = audit-fix pass;
-v3.1.5 = dopamine CTA redesign; **v3.2 = Vanguard becomes multi-tool (OCR +
-font identification)**.
+v3.1.5 = dopamine CTA redesign; v3.2 = Vanguard becomes multi-tool (OCR +
+font identification); **v4.0 = Sonara audio section — Demucs stem splitter +
+real-time 4-stem mixer (first PyTorch/CUDA dependency)**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-11 — v4.0: Sonara — Audio Stem Splitter (Demucs) + real-time mixer
+User request (`sonara_stem_splitter_prompt.md`): new sidebar section **Sonara**
+with one tool — split a song into Vocals/Drums/Bass/Other, play them back with
+per-stem Mute/Solo/Volume in real time, and save the stems the user wants.
+**`APP_VERSION = "4.0"`.** Decisions made with the user: **PyTorch CUDA build**
+(cu126 — the app's first torch dep; htdemucs_ft ≈ seconds/song on the RTX
+3070 Ti vs 15–25 min CPU; venv/exe grow ~4–5 GB, personal build) and
+**htdemucs_ft only** (no tiers). Playback = **sounddevice** (one OutputStream
+mixing 4 numpy arrays — sample-accurate, no drift; pygame's 4 channels share
+no clock).
+- **`bud3eij/sonara.py`:** PyPI demucs (4.0.1, pinned) **predates `demucs.api`**,
+  so it drives `pretrained.get_model` + per-submodel `apply_model` directly
+  (mirroring BagOfModels averaging) and injects a lazy **`_CountingPool`** for
+  real segment-level progress (params positional-only — demucs forwards its own
+  `pool=` kwarg; collided on first run). Own `_load_audio` (demucs' load_track
+  `sys.exit`s); `save_stem` writes WAV via stdlib `wave` (**torchaudio 2.11
+  removed `ta.save` to torchcodec** — found when saving died) and MP3 via
+  lameenc. Checkpoints → `TORCH_HOME=~/.bud3eij/models/torch`;
+  `model_is_cached()` first-run warning; `unload_models()` +
+  `torch.cuda.empty_cache()`.
+- **`bud3eij/stemplayer.py`:** `StemPlayer` — single OutputStream callback,
+  DAW solo semantics, pure-numpy `_gains()`/`_mix_block()` (unit-tested without
+  a device), seek/position/finished, `close()` wired into `_on_close`.
+  Gotcha: Bluetooth sinks take ~1 s before the callback starts (looked like a
+  stuck position in testing).
+- **GUI:** Sonara nav (lucide `audio-lines`; stem icons mic/drum/guitar/music)
+  → drop zone → Split Stems GradientButton (busy "Splitting") → **real**
+  progress bar (counting pool) → player card: ▶/⏸, seek slider (write-guard
+  flag so the 100 ms tick loop doesn't re-trigger seek), time label, 4 stem
+  rows (M/S red-active toggles, volume sliders, per-stem Save → wav/mp3 +
+  history). CLI `--split-stems FILE`.
+- **Verified:** headless 57 checks + GUI smoke 59 checks all green; module
+  verify (6 s clip split in ~6 s on CUDA incl. model load, monotonic progress,
+  wav+mp3 saves); CLI smoke (4 stems next to source); a scripted GUI run
+  (real split → play → live solo/mute gains → pause); panel screenshot at
+  1000×680. **Exe NOT rebuilt yet** — build command gained
+  `--collect-all demucs/torch/torchaudio/sounddevice --copy-metadata torch`
+  (~6 GB exe; rebuild on request).
 
 ### 2026-06-10 — v3.2: Vanguard multi-tool — Text Extraction (OCR) + What's The Font
 User request: two new image tools, self-contained in Vanguard — extract all text

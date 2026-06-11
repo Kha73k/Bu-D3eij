@@ -210,18 +210,86 @@ try:
 except ConversionError:
     check("font rejects non-image", True)
 
+# ---- 7d. sonara: stem splitting (Demucs htdemucs_ft) -------------------------
+print("\n[7d] sonara stem splitter (first ever run downloads ~320 MB)")
+import math  # noqa: E402
+import struct  # noqa: E402
+import wave as wave_mod  # noqa: E402
+
+from bud3eij.sonara import STEMS, save_stem, split_stems  # noqa: E402
+from bud3eij.stemplayer import StemPlayer  # noqa: E402
+
+sn_src = tmp / "clip.wav"
+sr = 44100
+frames = []
+for i in range(sr * 3):
+    t = i / sr
+    s = 0.4 * math.sin(2 * math.pi * 82 * t) + 0.3 * math.sin(2 * math.pi * 440 * t)
+    v = int(max(-1.0, min(1.0, s)) * 32767)
+    frames.append(struct.pack("<hh", v, v))
+with wave_mod.open(str(sn_src), "wb") as w:
+    w.setnchannels(2); w.setsampwidth(2); w.setframerate(sr)
+    w.writeframes(b"".join(frames))
+
+sn_fracs = []
+sn_res = split_stems(sn_src, progress=sn_fracs.append)
+check("sonara returns the 4 stems", set(sn_res["stems"]) == set(STEMS),
+      str(set(sn_res["stems"])))
+check("sonara stem shapes equal",
+      len({a.shape for a in sn_res["stems"].values()}) == 1)
+check("sonara samplerate 44100", sn_res["samplerate"] == 44100)
+check("sonara duration ~3s", abs(sn_res["duration"] - 3.0) < 0.5,
+      str(sn_res["duration"]))
+check("sonara progress monotonic to 1.0",
+      sn_fracs and sn_fracs == sorted(sn_fracs) and sn_fracs[-1] >= 0.99,
+      f"n={len(sn_fracs)}")
+sn_out = save_stem(sn_res["stems"]["vocals"], sn_res["samplerate"], tmp / "stem.wav")
+sn_out2 = save_stem(sn_res["stems"]["vocals"], sn_res["samplerate"], tmp / "stem.wav")
+with wave_mod.open(str(sn_out), "rb") as w:
+    check("stem wav valid", w.getnchannels() == 2 and w.getframerate() == 44100)
+check("stem save de-duplicates", sn_out2 != sn_out, str(sn_out2))
+try:
+    split_stems(tmp / "note.txt")
+    check("sonara rejects non-audio", False)
+except ConversionError:
+    check("sonara rejects non-audio", True)
+
+# ---- 7e. stem player mixing math (no audio device needed) --------------------
+print("\n[7e] stem player mixing math")
+import numpy as np  # noqa: E402
+
+tone = {s: np.full((1000, 2), 0.2, dtype=np.float32) for s in STEMS}
+sp = StemPlayer(tone, 44100)
+sp.set_mute("drums", True)
+check("mute zeroes the stem", sp._gains()["drums"] == 0.0)
+sp.set_solo("vocals", True)
+g = sp._gains()
+check("solo isolates", g["vocals"] == 1.0 and g["bass"] == 0.0 and g["other"] == 0.0)
+blk = sp._mix_block(0, 64)
+check("solo mix == vocals only", np.allclose(blk, tone["vocals"][:64]))
+sp.set_solo("vocals", False)
+sp.set_mute("drums", False)
+sp.set_volume("bass", 0.5)
+check("volume scales", sp._gains()["bass"] == 0.5)
+loud = StemPlayer({s: np.full((100, 2), 0.9, dtype=np.float32) for s in STEMS}, 44100)
+check("mix clips to [-1,1]", float(np.abs(loud._mix_block(0, 32)).max()) <= 1.0)
+tail = sp._mix_block(990, 64)
+check("end-of-audio zero pad", tail.shape == (64, 2) and np.allclose(tail[10:], 0.0))
+
 # ---- 8. unload functions -----------------------------------------------------
 print("\n[8] unload functions")
-from bud3eij import background, fontid, ocr, upscale, vanguard  # noqa: E402
+from bud3eij import background, fontid, ocr, sonara, upscale, vanguard  # noqa: E402
 
 background.unload_models()
 upscale.unload_models()
 vanguard.unload_models()
 ocr.unload_models()
 fontid.unload_models()
+sonara.unload_models()
 check("unload functions run", True)
 check("ocr engines cleared", not ocr._ENGINES)
 check("fontid session cleared", fontid._SESSION is None and fontid._CONFIG is None)
+check("sonara model cleared", sonara._MODEL is None)
 
 # ---- 9. youtube validation paths ---------------------------------------------
 print("\n[9] youtube validation (no network)")

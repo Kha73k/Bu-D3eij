@@ -19,6 +19,10 @@ saved right next to the original.
   text is AI-generated, with flagged passages), **Text Extraction** (offline OCR
   of any screenshot/photo, with copy-to-clipboard), and **What's The Font**
   (closest Google-Font matches for the lettering in an image)
+- **Sonara** tab (audio tools): **Audio Stem Splitter** — split any song into
+  **Vocals / Drums / Bass / Other** (Demucs `htdemucs_ft`, GPU-accelerated),
+  then mix them live in the built-in player (play/pause, seek, per-stem
+  mute/solo/volume) and save just the stems you want (WAV or MP3)
 - **Recent** tab: persistent history of your conversions with one-click *Open* / *Folder*
 - Progress indicator with clear success / error messages
 - Logo-derived red theme with a sun/moon toggle to switch Light / Dark
@@ -57,7 +61,11 @@ From the project folder (`Bu D3eij`):
 py -3.11 -m venv .venv
 .\.venv\Scripts\activate
 
-# 2. Install the Python dependencies
+# 2. Install PyTorch first (CUDA build for NVIDIA GPUs — strongly recommended
+#    for the Sonara stem splitter; without it a CPU build is used, ~20x slower)
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+
+# 3. Install the rest of the Python dependencies
 pip install -r requirements.txt
 ```
 
@@ -100,6 +108,7 @@ python app.py --upscale "C:\path\small.png" 2K       # 1080p / 2K / 4K
 python app.py --detect "C:\path\essay.docx"          # AI-likelihood estimate
 python app.py --extract-text "C:\path\shot.png" Max  # OCR (Fast/Max): prints the text
 python app.py --identify-font "C:\path\text.png"     # top-5 Google Font matches
+python app.py --split-stems "C:\path\song.mp3"       # 4 stem WAVs next to the song
 ```
 
 ## Standalone .exe (no Python needed)
@@ -125,9 +134,13 @@ pyinstaller --noconfirm --windowed --name "Bu D3eij" `
   --collect-all yt_dlp `
   --collect-all rembg --collect-all onnxruntime --copy-metadata pymatting --copy-metadata rembg `
   --collect-all tokenizers --collect-all rapidocr `
+  --collect-all demucs --collect-all torch --collect-all torchaudio `
+  --collect-all sounddevice --copy-metadata torch `
   --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
+
+> Note: bundling PyTorch (CUDA) makes the one-folder build ~6 GB.
 
 The icon is generated from `AppLogo.png` once with:
 `python -c "from PIL import Image; Image.open('AppLogo.png').save('AppLogo.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"`
@@ -179,6 +192,10 @@ The **Recent** tab lists past conversions (stored in
   for English (proper word spacing, catches faint/small lines) and fetches a
   small model once on first use. Nothing uses an online API — no accounts,
   no charges, no usage limits.
+- **Stem splitting** is GPU-accelerated on NVIDIA cards (seconds per song);
+  on CPU it works but takes ~15–25 minutes per song. The Demucs model
+  (~320 MB) downloads once on first use. Stem playback mixes in real time —
+  mute/solo/volume changes are heard instantly.
 
 ## Tech stack
 
@@ -186,4 +203,4 @@ Python 3.11 · customtkinter · tkinterdnd2 · Pillow · python-docx ·
 pdfplumber · reportlab · pdf2docx · python-pptx ·
 pymupdf4llm · mammoth · markdownify · yt-dlp · ffmpeg-python ·
 rembg · onnxruntime (Real-ESRGAN, DeBERTa detector, font classifier) ·
-rapidocr · tokenizers
+rapidocr · tokenizers · demucs + PyTorch CUDA (stem splitter) · sounddevice

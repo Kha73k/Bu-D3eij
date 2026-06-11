@@ -5,6 +5,35 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v4.0 — 2026-06-11
+
+A whole new direction: **Sonara**, the audio-tools section.
+
+### Added
+- **Audio Stem Splitter** — drop a song (MP3, WAV, FLAC, M4A, OGG, even the
+  audio of an MP4) and it's split into four stems: **Vocals, Drums, Bass,
+  Other**, using Demucs `htdemucs_ft` — the best open-source separation model.
+  Runs on your NVIDIA GPU when available (seconds per song) and falls back to
+  CPU. A real progress bar tracks the split; the model (~320 MB) downloads once
+  on first use.
+- **Built-in stem mixer** — after the split, play the mix right in the app:
+  - **▶ / ⏸** play-pause and a **seek bar** with live position
+  - per-stem **M** (mute) and **S** (solo) buttons — applied instantly while
+    playing, like a DAW
+  - per-stem **volume sliders**
+  - per-stem **Save** buttons — export only the stems you want (WAV or MP3),
+    next to the original song
+- Headless too: `--split-stems FILE` writes all four stem WAVs next to the file.
+- **Tools → Unload AI models** also frees the Demucs model (GPU memory included).
+
+### Notes
+- Everything runs locally — no accounts, no APIs, no usage limits.
+- This release adds PyTorch (CUDA) as a dependency, which makes the install and
+  the standalone build several GB larger. Worth it: stem separation quality is
+  in a different league from anything lighter.
+
+---
+
 ## v3.2 — 2026-06-10
 
 Vanguard grows into a multi-tool page: two new image tools join the AI detector.

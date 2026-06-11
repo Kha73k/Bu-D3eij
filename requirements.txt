@@ -16,4 +16,10 @@ numpy>=1.26
 onnxruntime>=1.16
 tokenizers>=0.15
 rapidocr>=3.0
+demucs==4.0.1
+sounddevice>=0.5
+# torch/torchaudio are installed separately with the CUDA index (see CLAUDE.md):
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
+# A plain `pip install -r requirements.txt` resolves demucs against the CPU
+# torch wheel instead — works, but stem splitting is ~20x slower.
 pywin32>=306 ; platform_system == "Windows"
