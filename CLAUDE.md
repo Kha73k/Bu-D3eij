@@ -562,12 +562,42 @@ still apply; only the file a function lives in changed.
   must be **opaque** (a transparent one shows the stacked sibling behind it). And
   an **empty `CTkFrame` keeps its default 200×200** — only build a sub-frame once
   it has children, or it stretches its row (hit on failed Recent rows).
+- **Lazy frame building + UI responsiveness (perf, 2026-06-13):** `_build_frames`
+  no longer builds all nine pages up front — it stores `self._frame_container` +
+  `self._frame_builders` (name→`_build_*` method) and leaves `self.frames` empty;
+  **`show_frame` builds a frame on its first visit** and caches it. Reason:
+  `set_appearance_mode` redraws *every* registered CTk widget, so building only
+  what's been opened keeps both startup and the Light/Dark toggle cheap (toggle
+  right after launch went ~252 → ~38 ms). Keep new pages lazy — register the
+  builder, don't call it in `_build_frames`. Two more levers, both in `app.py`:
+  (1) **drag-only animation pause** — `GradientButton._suspended` (class flag)
+  makes the button's `_tick` skip its window-repainting compose; the App raises it
+  **only on a genuine root move/resize** (`_on_root_configure`: root `<Configure>`
+  with a changed `(x,y,w,h)`, debounced 130 ms via `_resume_animations`) so a
+  dragged window stops churning. Do NOT trigger it on tab switches or wrap the
+  toggle in it (an earlier global version did and broke first-paint / helped
+  nothing). (2) **flicker-free toggle** — `_frozen_redraw(fn)` wraps
+  `set_appearance_mode` in a Windows **`WM_SETREDRAW`** freeze on **Tk's content
+  HWND (`self.winfo_id()`)**, then one `RedrawWindow`. Freeze the content window,
+  **never `GA_ROOT`** — that froze the OS title bar and blanked the min/close
+  buttons. Degrades gracefully without pywin32.
 - **Recent/history:** persisted to `%LOCALAPPDATA%\Bu D3eij\history.json`
   (`load_history`/`save_history`, cap `MAX_HISTORY`). `add_history()` mutates the
   shared `self.history`, so off the main thread it must be called via
   `self.after(0, self.add_history, ...)` (both the single and batch paths do).
   v3.1: `load_history` drops non-dict entries (one corrupt entry used to crash
   `_recent_row` at startup); "Clear history" asks for confirmation.
+  **Perf (2026-06-13):** the Recent table is the app's heaviest widget set
+  (~12 CTk widgets/row, up to 100 rows). `_refresh_recent` is **guarded by
+  `self._recent_dirty`** and rebuilds only when the history actually changed —
+  `show_frame` calls it on every Recent visit but it no-ops when clean (it was
+  rebuilding from scratch each time: ~0.5 s at 14 rows, seconds at 100).
+  `add_history`/`clear_history`/the initial build set the flag. Because
+  `set_appearance_mode` redraws every registered widget (hidden ones too), the
+  Recent rows also taxed the theme toggle, so `_toggle_appearance` **destroys
+  the rows (marking dirty) when Recent isn't on screen** before flipping — they
+  rebuild lazily on the next visit. Don't reintroduce an unconditional
+  per-show rebuild.
 - **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT`,
   `--download URL FORMAT` (mp3/mp4, saves to cwd), `--remove-bg FILE [TIER]`
   (transparent PNG next to the source; TIER = Flash/Mid/Omega, default Mid),

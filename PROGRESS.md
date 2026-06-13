@@ -2,7 +2,7 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-11 (v4.1 Marquee GPU models)_
+_Last updated: 2026-06-13 (UI responsiveness pass)_
 
 ## Status: working app — v4.1 (Marquee GPU upgrade; exe rebuild pending)
 
@@ -25,6 +25,48 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-13 — UI responsiveness pass (tab switch / drag / theme toggle)
+User reported three things: tabs slow to open, window dragging sluggish, and a
+stuttery Light/Dark toggle. **Measured first** (throwaway probes timing
+`show_frame`/`_toggle_appearance` with forced `update_idletasks`) — the
+`GradientButton` animation was a red herring (one `_compose` ≈ **1 ms**; a first
+"suspend the animation everywhere" attempt was scrapped after it made tabs/toggle
+*worse*). All fixes in `app.py`, no visual/API change (`_recent_row` untouched, so
+rows look identical). The four landed changes:
+- **Recent `_recent_dirty` flag** (tab-open delay): the Recent table is the app's
+  heaviest widget set (~12 CTk widgets/row) and was **rebuilt on every visit**
+  (493 ms @14 rows, ~3.4 s @100). `_refresh_recent` now early-returns unless the
+  history changed; flag set on `add_history`/`clear_history`/initial build.
+  → Recent re-open **493 → ~52 ms**.
+- **Lazy frame building** (toggle + startup): `_build_frames` no longer builds all
+  9 frames up front — `show_frame` builds each on first visit (`_frame_builders`
+  map + `_frame_container`). Since `set_appearance_mode` redraws *every* registered
+  widget, only-visited frames now exist → toggle scales with what you've opened.
+  → toggle right after launch (Converter only) **252 → ~38 ms**; startup lighter.
+  Also `_toggle_appearance` drops hidden Recent rows first (they redraw even when
+  off-screen), rebuilt lazily on next visit.
+- **Drag-only animation pause** (sluggish drag): the only thing repainting the
+  window during a move is the button animation (each tick swaps a `CTkImage`).
+  `GradientButton._suspended` (class flag) makes `_tick` skip the compose but keep
+  its timer alive; the App sets it **only on a real root move/resize** (root
+  `<Configure>` with a changed `(x,y,w,h)` — never on tab switches, so no
+  paint-skip regression) and clears it 130 ms after the drag settles. → smooth.
+- **Flicker-free toggle** (`_frozen_redraw`): CTk recolors each widget's canvas
+  with no double-buffering, so the switch visibly "swept" across the window
+  ("looks like the app is reopening"). Now wraps `set_appearance_mode` in a
+  Windows **WM_SETREDRAW** freeze on Tk's **content** HWND (`winfo_id()`, *not*
+  `GA_ROOT` — freezing the framed window blanked the title-bar min/close buttons
+  until the next OS paint), then one `RedrawWindow`. Degrades gracefully without
+  pywin32. → one clean atomic flip, caption untouched.
+- **`GradientButton._apply_resize` no longer nulls `_stat`:** `_ensure_static`
+  already rebuilds on real `(w,h,alive)` change, so the unconditional invalidation
+  forced a full static-layer rebuild on every `<Configure>` (each CTA-page show).
+- **Verified:** GUI smoke 59/59; correctness probes (Recent dirty round-trip;
+  4× toggle through the WM_SETREDRAW path, no errors) green; user-confirmed in the
+  running app (tabs fast, drag smooth, toggle clean, title bar intact). Source-only
+  change — **exe rebuild pending** (no build-command change needed; pywin32 already
+  bundled).
 
 ### 2026-06-11 — v4.1: Marquee gets the GPU treatment (model audit follow-up)
 User request: audit every AI model and replace each with the best free local

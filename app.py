@@ -253,6 +253,14 @@ class GradientButton(ctk.CTkFrame):
     and is fully cancelled on destroy, so it never burns CPU in the background.
     """
 
+    # Set True by the App only while the OS window is actively being moved or
+    # resized. The animation loop then skips its (window-repainting) compose but
+    # keeps its timer alive, so the dragged window's content stops churning and
+    # the cursor tracks smoothly; it resumes the instant the drag settles. This
+    # is NOT toggled on tab switches (those don't move/resize the root), so a
+    # freshly-shown button still paints immediately.
+    _suspended = False
+
     GLOW_PAD = 9      # logical px of glow margin reserved around the body
     RADIUS = 0.34     # corner radius as a fraction of the body height
     # The looping "lava" palette the enabled body flows through (first == last
@@ -414,7 +422,10 @@ class GradientButton(ctk.CTkFrame):
 
     def _apply_resize(self):
         self._resize_id = None
-        self._stat = None  # force static layers to rebuild at the new width
+        # _ensure_static is keyed on (w, h, alive) and rebuilds itself when the
+        # size truly changes; nulling _stat here forced a full (lava strip + blur
+        # + glow-dot sprites) rebuild on every <Configure>, e.g. each time the
+        # page is shown — pure waste that added latency to CTA tab switches.
         self._render()
 
     def _on_destroy(self, event):
@@ -448,6 +459,13 @@ class GradientButton(ctk.CTkFrame):
         import random
         self._anim_id = None
         if not self.winfo_exists() or not self.winfo_ismapped():
+            return
+        # While the window is being dragged/resized, don't repaint (it's what
+        # makes the moving window feel sluggish); keep the timer alive so the
+        # animation resumes seamlessly the moment the drag stops.
+        if GradientButton._suspended:
+            if self._busy or self._enabled:
+                self._anim_id = self.after(90, self._tick)
             return
         if self._busy:
             self._phase = (self._phase + 0.035) % 1.0
@@ -948,6 +966,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._sn_run = 0             # generation counter for Sonara splits
         self._sn_tick_after = None   # playback-position updater after() handle
         self._sn_slider_drag = False # True while the tick loop writes the slider
+        self._recent_dirty = True    # rebuild the Recent table only when changed
+        self._win_geom = None        # last (x,y,w,h); detects real move/resize
+        self._anim_resume_id = None  # debounce handle for resuming button anims
 
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -956,6 +977,33 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._build_frames()
         self.show_frame("Converter")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Pause the animated buttons while the window is actively dragged/resized
+        # so the moving window's content stops churning (smoother cursor).
+        self.bind("<Configure>", self._on_root_configure, add="+")
+
+    # ---- animation throttling while the window is dragged ----------------- #
+    def _on_root_configure(self, event):
+        # Only the root's own geometry change matters (child <Configure> events
+        # don't trigger this binding). Compare x/y/w/h so an unchanged event is
+        # ignored — and crucially, tab switches never move/resize the root, so
+        # this never fires for them.
+        if event.widget is not self:
+            return
+        geom = (self.winfo_x(), self.winfo_y(), event.width, event.height)
+        if geom == self._win_geom:
+            return
+        self._win_geom = geom
+        GradientButton._suspended = True
+        if self._anim_resume_id is not None:
+            try:
+                self.after_cancel(self._anim_resume_id)
+            except Exception:  # noqa: BLE001
+                pass
+        self._anim_resume_id = self.after(130, self._resume_animations)
+
+    def _resume_animations(self):
+        self._anim_resume_id = None
+        GradientButton._suspended = False
 
     def _set_window_icon(self):
         self._icon_path = resource_path("AppLogo.ico")
@@ -1133,20 +1181,24 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         container.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
         container.grid_rowconfigure(0, weight=1)
         container.grid_columnconfigure(0, weight=1)
-
-        self.frames: dict[str, ctk.CTkFrame] = {
-            "Converter": self._build_converter(container),
-            "Batch Convert": self._build_batch(container),
-            "YouTube": self._build_youtube(container),
-            "Marquee": self._build_marquee(container),
-            "Vanguard": self._build_vanguard(container),
-            "Sonara": self._build_sonara(container),
-            "Home": self._build_home(container),
-            "Recent": self._build_recent(container),
-            "Tools": self._build_tools(container),
+        self._frame_container = container
+        # Frames are built lazily on first show (see show_frame). Building all
+        # nine up front made startup slow and — because set_appearance_mode
+        # redraws every registered widget — inflated the Light/Dark toggle with
+        # the cost of sections the user may never open. Now only visited frames
+        # exist, so the toggle's work set is exactly what's been used.
+        self._frame_builders = {
+            "Converter": self._build_converter,
+            "Batch Convert": self._build_batch,
+            "YouTube": self._build_youtube,
+            "Marquee": self._build_marquee,
+            "Vanguard": self._build_vanguard,
+            "Sonara": self._build_sonara,
+            "Home": self._build_home,
+            "Recent": self._build_recent,
+            "Tools": self._build_tools,
         }
-        for frame in self.frames.values():
-            frame.grid(row=0, column=0, sticky="nsew")
+        self.frames: dict[str, ctk.CTkFrame] = {}
 
     # ---- worker-job bookkeeping (close guard) ----------------------------- #
     def _job_started(self):
@@ -1169,7 +1221,13 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def show_frame(self, name: str):
         frame = self.frames.get(name)
         if frame is None:
-            return
+            # First visit — build the frame now (lazy; see _build_frames).
+            builder = self._frame_builders.get(name)
+            if builder is None:
+                return
+            frame = builder(self._frame_container)
+            frame.grid(row=0, column=0, sticky="nsew")
+            self.frames[name] = frame
         self._current_frame = name
         # grid/grid_remove (not tkraise) so a CTkScrollableFrame raises reliably
         # above the plain sibling frames sharing the same grid cell.
@@ -1194,10 +1252,61 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _toggle_appearance(self):
         """Flip between Dark and Light; the icon shows the mode you can switch to."""
         self.appearance_mode = "Light" if self.appearance_mode == "Dark" else "Dark"
-        ctk.set_appearance_mode(self.appearance_mode)
+        # set_appearance_mode redraws every registered widget — including the
+        # Recent rows even while they're hidden. On a large history that's the
+        # bulk of the toggle's cost, so when Recent isn't on screen, drop its
+        # rows first (they rebuild lazily on the next visit via _recent_dirty).
+        if self._current_frame != "Recent" and hasattr(self, "recent_scroll"):
+            children = self.recent_scroll.winfo_children()
+            if children:
+                for child in children:
+                    child.destroy()
+                self._recent_dirty = True
+        self._frozen_redraw(lambda: ctk.set_appearance_mode(self.appearance_mode))
         self.theme_toggle.configure(
             text=SUN_GLYPH if self.appearance_mode == "Dark" else MOON_GLYPH
         )
+
+    def _frozen_redraw(self, fn):
+        """Run `fn` with window painting frozen, then repaint once (no flicker).
+
+        CustomTkinter recolours each widget's canvas individually with no
+        double-buffering, so a theme switch visibly "sweeps" across the window —
+        it looks like the app is redrawing itself. WM_SETREDRAW suppresses all
+        intermediate GDI paints; we re-enable and force a single clean repaint of
+        the whole window at the end. Degrades gracefully off Windows / without
+        pywin32 (just runs `fn`).
+        """
+        hwnd = None
+        try:
+            import win32con
+            import win32gui
+            # Freeze Tk's CONTENT window (winfo_id), NOT the framed top-level
+            # (GA_ROOT). Freezing the framed window also froze the OS-drawn title
+            # bar, so the minimize/close buttons went blank until the next OS
+            # repaint. The content HWND holds all the CTk widgets; the caption is
+            # the parent's and stays live.
+            hwnd = self.winfo_id()
+            win32gui.SendMessage(hwnd, win32con.WM_SETREDRAW, False, 0)
+        except Exception:  # noqa: BLE001
+            hwnd = None
+        try:
+            fn()
+            if hwnd is not None:
+                self.update_idletasks()  # recompute layout while paints are held
+        finally:
+            if hwnd is not None:
+                try:
+                    import win32con
+                    import win32gui
+                    win32gui.SendMessage(hwnd, win32con.WM_SETREDRAW, True, 0)
+                    win32gui.RedrawWindow(
+                        hwnd, None, None,
+                        win32con.RDW_INVALIDATE | win32con.RDW_ALLCHILDREN
+                        | win32con.RDW_UPDATENOW | win32con.RDW_ERASE,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
 
     def _section_header(self, parent, title: str, subtitle: str = ""):
         head = ctk.CTkFrame(parent, fg_color="transparent")
@@ -1469,6 +1578,12 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _refresh_recent(self):
         if not hasattr(self, "recent_scroll"):
             return
+        # Rebuilding the table is expensive (each row is ~12 CTk widgets, and on
+        # a full 100-entry history that's seconds of widget churn). show_frame
+        # calls this on every visit, so skip the work unless the history has
+        # actually changed since the last build.
+        if not self._recent_dirty:
+            return
         for child in self.recent_scroll.winfo_children():
             child.destroy()
         if not self.history:
@@ -1476,9 +1591,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                 self.recent_scroll, text="No conversions yet — your results will appear here.",
                 text_color=MUTED,
             ).grid(row=0, column=0, sticky="w", padx=10, pady=16)
+            self._recent_dirty = False
             return
         for i, entry in enumerate(self.history):
             self._recent_row(i, entry)
+        self._recent_dirty = False
 
     def _recent_row(self, i: int, entry: dict):
         src = entry.get("source", "") or ""
@@ -1546,6 +1663,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.history.insert(0, entry)
         del self.history[MAX_HISTORY:]
         save_history(self.history)
+        self._recent_dirty = True
         # Rebuilding the table is expensive (up to 100 rows of widgets); only do
         # it when Recent is actually on screen — show_frame refreshes otherwise.
         if self._current_frame == "Recent":
@@ -1559,6 +1677,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             return
         self.history = []
         save_history(self.history)
+        self._recent_dirty = True
         self._refresh_recent()
 
     def open_path(self, path):
