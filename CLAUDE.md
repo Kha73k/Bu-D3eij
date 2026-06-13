@@ -683,6 +683,31 @@ still apply; only the file a function lives in changed.
   HWND (`self.winfo_id()`)**, then one `RedrawWindow`. Freeze the content window,
   **never `GA_ROOT`** — that froze the OS title bar and blanked the min/close
   buttons. Degrades gracefully without pywin32.
+- **Scrollable page host (`ScrollArea`, v4.2.1):** the content area (root col 1)
+  is a `ScrollArea` (a `tk.Canvas` + `CTkScrollbar` + inner `CTkFrame`); pages
+  grid into **`self._frame_container = self._scroll_area.inner`** exactly as
+  before — `show_frame` is unchanged in how it grids/raises. The trick that keeps
+  it invisible at normal sizes: the canvas window item's height is set to
+  `max(canvas_height, content_reqheight)` (`_sync`), so when the viewport is tall
+  enough the inner frame is **stretched to fill** and the pages'
+  `grid_rowconfigure(weight=1)` still expands results to the bottom (no visual
+  change); only when the window is shrunk **below a page's natural height** does a
+  scrollbar appear and the mouse wheel scroll. `_on_wheel` (a single `bind_all`)
+  no-ops unless the page overflows, so inner scrollables (the Recent list,
+  textboxes) keep their own wheel. The raw `tk.Canvas` bg isn't theme-aware —
+  `_toggle_appearance` calls `_scroll_area.refresh_bg()`; `show_frame` calls
+  `to_top()` (a new page may be a different height). When adding a page, nothing
+  special is needed — it rides this automatically.
+- **Clear/Reset buttons (v4.2.1):** every file/result tool page has one beside its
+  primary CTA (the Converter + AI Detector already did). The outlined button comes
+  from **`_clear_button(parent, command)`**; image/audio drop-zone panels reset via
+  the shared **`_reset_image_tool(...)`** (clears the file attr, restores the drop
+  zone's icon/title/hint, disables the CTA, hides progress + results, resets the
+  status). Per-page handlers: `reset_marquee`/`reset_upscale`/`reset_vg_ocr`/
+  `reset_vg_font`/`reset_sonara` (also `_sn_close_player()`s + bumps `_sn_run`),
+  `reset_youtube`/`reset_batch`, and the Nexus `reset_nxc` (all three converter
+  categories → defaults + recompute) / `reset_nxq` (clears every field group +
+  options). Add one for any new tool page.
 - **Recent/history:** persisted to `%LOCALAPPDATA%\Bu D3eij\history.json`
   (`load_history`/`save_history`, cap `MAX_HISTORY`). `add_history()` mutates the
   shared `self.history`, so off the main thread it must be called via

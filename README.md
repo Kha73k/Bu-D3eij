@@ -34,6 +34,8 @@ saved right next to the original.
   colours, error-correction, a centre logo, and PNG/SVG export)
 - **Recent** tab: persistent history of your conversions with one-click *Open* / *Folder*
 - Progress indicator with clear success / error messages
+- A **Clear/Reset** button on every tool page to start fresh
+- **Resizes gracefully** — shrink the window and pages scroll (mouse wheel + scrollbar) instead of clipping
 - Logo-derived red theme with a sun/moon toggle to switch Light / Dark
 - Optional headless mode: `python app.py --convert photo.png jpg`
 

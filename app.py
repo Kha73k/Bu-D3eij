@@ -16,6 +16,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+import tkinter as tk
 from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
@@ -950,6 +951,79 @@ class GradientButton(ctk.CTkFrame):
         self._label.configure(image=ci)
 
 
+class ScrollArea(ctk.CTkFrame):
+    """Hosts the page frames so the app stays usable when the window is small.
+
+    A page is gridded into ``.inner`` exactly as before. When the viewport is
+    tall enough the page *fills* it (the inner window is stretched to the canvas
+    height, so the pages' ``grid_rowconfigure(weight=1)`` still works — no visual
+    change). When the window is shrunk below a page's natural height, a scrollbar
+    appears and the mouse wheel scrolls the page into view.
+    """
+
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self._canvas = tk.Canvas(self, highlightthickness=0, bd=0, bg=self._bg())
+        self._canvas.grid(row=0, column=0, sticky="nsew")
+        self._sb = ctk.CTkScrollbar(self, orientation="vertical",
+                                    command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=self._sb.set)
+        self.inner = ctk.CTkFrame(self._canvas, fg_color="transparent")
+        self.inner.grid_rowconfigure(0, weight=1)
+        self.inner.grid_columnconfigure(0, weight=1)
+        self._win = self._canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self._canvas.bind("<Configure>", self._on_canvas)
+        self.inner.bind("<Configure>", lambda _e: self._sync())
+        # bind_all so the wheel works wherever the pointer is over a page; the
+        # handler no-ops unless the page actually overflows (so inner scrollables
+        # — the Recent list, textboxes — keep their own wheel behaviour).
+        self._canvas.bind_all("<MouseWheel>", self._on_wheel, add="+")
+
+    def _bg(self) -> str:
+        return self._apply_appearance_mode(ctk.ThemeManager.theme["CTk"]["fg_color"])
+
+    def refresh_bg(self):
+        self._canvas.configure(bg=self._bg())
+
+    def _on_canvas(self, event):
+        self._canvas.itemconfigure(self._win, width=event.width)
+        self._sync(event.height)
+
+    def _sync(self, canvas_h: int | None = None):
+        if canvas_h is None:
+            canvas_h = self._canvas.winfo_height()
+        content_h = self.inner.winfo_reqheight()
+        height = max(canvas_h, content_h)
+        self._canvas.itemconfigure(self._win, height=height)
+        self._canvas.configure(
+            scrollregion=(0, 0, self._canvas.winfo_width(), height))
+        if content_h > canvas_h + 1:
+            self._sb.grid(row=0, column=1, sticky="ns", padx=(2, 0))
+        else:
+            self._sb.grid_remove()
+            self._canvas.yview_moveto(0.0)
+
+    def to_top(self):
+        self._canvas.yview_moveto(0.0)
+        self.after_idle(self._sync)
+
+    def _on_wheel(self, event):
+        # Only hijack the wheel when the page overflows the viewport…
+        if self._canvas.winfo_height() >= self.inner.winfo_reqheight():
+            return
+        # …and let a hovered Text widget that can still scroll keep its wheel.
+        w = event.widget
+        if isinstance(w, tk.Text):
+            try:
+                if w.yview() != (0.0, 1.0):
+                    return
+            except Exception:  # noqa: BLE001
+                pass
+        self._canvas.yview_scroll(int(-event.delta / 120), "units")
+
+
 class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
@@ -1205,11 +1279,12 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.theme_toggle.grid(row=len(NAV_ITEMS) + 2, column=0, padx=15, pady=20, sticky="s")
 
     def _build_frames(self):
-        container = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
-        container.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
-        container.grid_rowconfigure(0, weight=1)
-        container.grid_columnconfigure(0, weight=1)
-        self._frame_container = container
+        # The page host scrolls when the window is shrunk below a page's height
+        # and fills the viewport otherwise (see ScrollArea). Pages grid into
+        # `_frame_container` (the scroll area's inner frame) exactly as before.
+        self._scroll_area = ScrollArea(self)
+        self._scroll_area.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
+        self._frame_container = self._scroll_area.inner
         # Frames are built lazily on first show (see show_frame). Building all
         # nine up front made startup slow and — because set_appearance_mode
         # redraws every registered widget — inflated the Light/Dark toggle with
@@ -1277,6 +1352,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self._refresh_recent()
         elif name == "Tools":
             self._refresh_tools()
+        # New page may be taller/shorter than the last — recompute scroll + top.
+        if hasattr(self, "_scroll_area"):
+            self._scroll_area.to_top()
 
     def _toggle_appearance(self):
         """Flip between Dark and Light; the icon shows the mode you can switch to."""
@@ -1292,6 +1370,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                     child.destroy()
                 self._recent_dirty = True
         self._frozen_redraw(lambda: ctk.set_appearance_mode(self.appearance_mode))
+        if hasattr(self, "_scroll_area"):
+            self._scroll_area.refresh_bg()  # raw tk.Canvas bg isn't auto-themed
         self.theme_toggle.configure(
             text=SUN_GLYPH if self.appearance_mode == "Dark" else MOON_GLYPH
         )
@@ -1833,6 +1913,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.batch_export_label = ctk.CTkLabel(
             ctrl, text="Output: next to each source", text_color=MUTED)
         self.batch_export_label.grid(row=0, column=4)
+        ctk.CTkButton(
+            ctrl, text="Clear", width=70, fg_color="transparent", border_width=1,
+            border_color=MUTED, text_color=NAV_TEXT,
+            hover_color=("#EBE0E1", "#2A2426"), command=self.reset_batch,
+        ).grid(row=0, column=5, padx=(16, 0))
 
         # Read-only log: a Textbox is the right widget, but the user shouldn't
         # be able to type into their own results. Writes toggle the state.
@@ -1993,6 +2078,33 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if path.is_dir():
             return "That's a folder — drop a single file."
         return "Please drop a single file."
+
+    # ---- shared Clear / Reset plumbing ----------------------------------- #
+    def _clear_button(self, parent, command, *, text="Clear", height=46,
+                      width=96):
+        """The outlined Clear/Reset button used beside a tool's primary CTA."""
+        return ctk.CTkButton(
+            parent, text=text, width=width, height=height,
+            font=self._font(14, "semibold"), fg_color="transparent",
+            border_width=2, border_color=RED, text_color=TEXT,
+            hover_color=("#F1DDDD", "#2E2A2C"), command=command)
+
+    def _reset_image_tool(self, *, file_attr, icon_label, drop_icon, primary,
+                          secondary, primary_text, hint_text, button, status,
+                          status_text, progress=None, results=None) -> None:
+        """Reset a drop-zone image/audio tool panel back to its initial state."""
+        setattr(self, file_attr, None)
+        if icon_label is not None and drop_icon is not None:
+            icon_label.configure(image=drop_icon)
+        primary.configure(text=primary_text)
+        secondary.configure(text=hint_text)
+        button.configure(state="disabled")
+        if progress is not None:
+            progress.grid_remove()
+            progress.set(0)
+        if results is not None:
+            results.grid_remove()
+        status.configure(text=status_text, text_color=MUTED)
 
     # ---- converter actions ---------------------------------------------- #
     def on_drop(self, event):
@@ -2202,6 +2314,17 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.batch_list.see("end")
         self.batch_list.configure(state="disabled")
 
+    def reset_batch(self):
+        self.batch_files = []
+        self.batch_primary.configure(text="Drop multiple files here")
+        self.batch_label.configure(text="or click to browse")
+        self.batch_to.configure(values=["-"], state="disabled")
+        self.batch_to.set("-")
+        self.batch_btn.configure(state="disabled")
+        self._batch_clear_log()
+        self.batch_progress.set(0)
+        self.batch_status.configure(text="", text_color=MUTED)
+
     # ---- youtube view ---------------------------------------------------- #
     def _build_youtube(self, parent) -> ctk.CTkFrame:
         frame = ctk.CTkFrame(parent)
@@ -2233,11 +2356,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             opts, text="MP4 = video · MP3 = audio (192 kbps)", text_color=MUTED,
         ).grid(row=0, column=2, padx=(14, 0))
 
+        btnrow = ctk.CTkFrame(card, fg_color="transparent")
+        btnrow.grid(row=3, column=0, sticky="ew", padx=18, pady=(2, 10))
+        btnrow.grid_columnconfigure(0, weight=1)
         self.yt_btn = GradientButton(
-            card, text="Download", height=46, icon="download",
+            btnrow, text="Download", height=46, icon="download",
             busy_text="Downloading", command=self.on_youtube_download,
         )
-        self.yt_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(2, 10))
+        self.yt_btn.grid(row=0, column=0, sticky="ew")
+        self._clear_button(btnrow, self.reset_youtube).grid(row=0, column=1, padx=(10, 0))
 
         self.yt_progress = ctk.CTkProgressBar(frame, height=8)
         self.yt_progress.set(0)
@@ -2317,6 +2444,13 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _youtube_done(self, url: str, out: Path | None, error: Exception | None):
         self._job_done(status_label=self.yt_status, progress_bar=self.yt_progress,
                        button=self.yt_btn, src=url, out=out, error=error)
+
+    def reset_youtube(self):
+        self.yt_url.delete(0, "end")
+        self.yt_format.set("MP4")
+        self.yt_progress.grid_remove()
+        self.yt_progress.set(0)
+        self.yt_status.configure(text="Paste a video link to begin.", text_color=MUTED)
 
     # ---- marquee (image editing) view ------------------------------------ #
     def _build_marquee(self, parent) -> ctk.CTkFrame:
@@ -2398,11 +2532,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.mq_model_caption.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 10))
 
+        btnrow = ctk.CTkFrame(card, fg_color="transparent")
+        btnrow.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
+        btnrow.grid_columnconfigure(0, weight=1)
         self.mq_btn = GradientButton(
-            card, text="Remove Background", height=46, icon="sparkles",
+            btnrow, text="Remove Background", height=46, icon="sparkles",
             busy_text="Removing", command=self.on_marquee_remove, state="disabled",
         )
-        self.mq_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
+        self.mq_btn.grid(row=0, column=0, sticky="ew")
+        self._clear_button(btnrow, self.reset_marquee).grid(row=0, column=1, padx=(10, 0))
 
         self.mq_progress = ctk.CTkProgressBar(panel, height=8)
         self.mq_progress.set(0)
@@ -2479,11 +2617,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.up_fit.set("Pad")
         self.up_fit.grid(row=0, column=3)
 
+        btnrow = ctk.CTkFrame(card, fg_color="transparent")
+        btnrow.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 10))
+        btnrow.grid_columnconfigure(0, weight=1)
         self.up_btn = GradientButton(
-            card, text="Upscale Image", height=46, icon="sparkles",
+            btnrow, text="Upscale Image", height=46, icon="sparkles",
             busy_text="Upscaling", command=self.on_upscale_run, state="disabled",
         )
-        self.up_btn.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 10))
+        self.up_btn.grid(row=0, column=0, sticky="ew")
+        self._clear_button(btnrow, self.reset_upscale).grid(row=0, column=1, padx=(10, 0))
 
         self.up_progress = ctk.CTkProgressBar(panel, height=8)
         self.up_progress.set(0)
@@ -2604,6 +2746,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._fill_stop(self.mq_progress)
         self._job_done(status_label=self.mq_status, progress_bar=self.mq_progress,
                        button=self.mq_btn, src=src, out=out, error=error)
+
+    def reset_marquee(self):
+        self._reset_image_tool(
+            file_attr="marquee_file", icon_label=self.mq_icon_label,
+            drop_icon=self.mq_drop_icon, primary=self.mq_primary,
+            secondary=self.mq_secondary, primary_text="Drag & drop an image here",
+            hint_text="or click to browse", button=self.mq_btn,
+            progress=self.mq_progress, status=self.mq_status,
+            status_text="Drop an image to begin.")
 
     # ---- eased fill (for workers with no real progress signal) ------------ #
     # Used by the bg remover, Text Extraction and What's The Font; state is
@@ -2728,6 +2879,16 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _upscale_done(self, src: Path, out: Path | None, error: Exception | None):
         self._job_done(status_label=self.up_status, progress_bar=self.up_progress,
                        button=self.up_btn, src=src, out=out, error=error)
+
+    def reset_upscale(self):
+        self._reset_image_tool(
+            file_attr="upscale_file", icon_label=self.up_icon_label,
+            drop_icon=self.up_drop_icon, primary=self.up_primary,
+            secondary=self.up_secondary,
+            primary_text="Drag & drop a low-res image here",
+            hint_text="or click to browse  ·  JPG · PNG · WEBP · BMP · GIF · TIFF",
+            button=self.up_btn, progress=self.up_progress, status=self.up_status,
+            status_text="Drop a low-res image to begin.")
 
     # ===================================================================== #
     # Vanguard — AI text tools (detector / text extraction / font ID)
@@ -2929,11 +3090,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         )
         self.vgo_model_caption.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 6))
 
+        btnrow = ctk.CTkFrame(card, fg_color="transparent")
+        btnrow.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
+        btnrow.grid_columnconfigure(0, weight=1)
         self.vgo_btn = GradientButton(
-            card, text="Extract Text", height=46, icon="scan-text",
+            btnrow, text="Extract Text", height=46, icon="scan-text",
             busy_text="Extracting", command=self.on_vg_ocr_run, state="disabled",
         )
-        self.vgo_btn.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
+        self.vgo_btn.grid(row=0, column=0, sticky="ew")
+        self._clear_button(btnrow, self.reset_vg_ocr).grid(row=0, column=1, padx=(10, 0))
 
         self.vgo_progress = ctk.CTkProgressBar(panel, height=8)
         self.vgo_progress.set(0)
@@ -2985,12 +3150,16 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vgf_primary = dz["primary"]
         self.vgf_secondary = dz["secondary"]
 
-        # bare button row (like the detector) — the results card needs the room
+        # button row (Identify + Clear) — the results card needs the room
+        btnrow = ctk.CTkFrame(panel, fg_color="transparent")
+        btnrow.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 10))
+        btnrow.grid_columnconfigure(0, weight=1)
         self.vgf_btn = GradientButton(
-            panel, text="Identify Font", height=46, icon="type",
+            btnrow, text="Identify Font", height=46, icon="type",
             busy_text="Identifying", command=self.on_vg_font_run, state="disabled",
         )
-        self.vgf_btn.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 10))
+        self.vgf_btn.grid(row=0, column=0, sticky="ew")
+        self._clear_button(btnrow, self.reset_vg_font).grid(row=0, column=1, padx=(10, 0))
 
         self.vgf_progress = ctk.CTkProgressBar(panel, height=8)
         self.vgf_progress.set(0)
@@ -3321,6 +3490,16 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.vgo_status.configure(text=f"✓  Copied {len(text):,} characters to the "
                                        "clipboard.", text_color=SUCCESS)
 
+    def reset_vg_ocr(self):
+        self._reset_image_tool(
+            file_attr="vg_ocr_file", icon_label=self.vgo_icon_label,
+            drop_icon=self.vgo_drop_icon, primary=self.vgo_primary,
+            secondary=self.vgo_secondary,
+            primary_text="Drag & drop a screenshot or photo here",
+            hint_text="or click to browse  ·  JPG · PNG · WEBP · BMP · GIF · TIFF",
+            button=self.vgo_btn, progress=self.vgo_progress, results=self.vgo_results,
+            status=self.vgo_status, status_text="Drop an image to begin.")
+
     # ---- vanguard: what's-the-font actions --------------------------------- #
     def on_vg_font_drop(self, event):
         paths = self._parse_drop(event)
@@ -3396,6 +3575,16 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                  f"closest of ~3,500 Google Fonts for {src.name}.",
             text_color=SUCCESS)
 
+    def reset_vg_font(self):
+        self._reset_image_tool(
+            file_attr="vg_font_file", icon_label=self.vgf_icon_label,
+            drop_icon=self.vgf_drop_icon, primary=self.vgf_primary,
+            secondary=self.vgf_secondary,
+            primary_text="Drag & drop an image of some text here",
+            hint_text="or click to browse  ·  a tight crop of large, clear text works best",
+            button=self.vgf_btn, progress=self.vgf_progress, results=self.vgf_results,
+            status=self.vgf_status, status_text="Drop an image of text to begin.")
+
     # ===================================================================== #
     # Sonara — audio tools (stem splitter)
     # ===================================================================== #
@@ -3420,11 +3609,15 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.sn_primary = dz["primary"]
         self.sn_secondary = dz["secondary"]
 
+        btnrow = ctk.CTkFrame(frame, fg_color="transparent")
+        btnrow.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 10))
+        btnrow.grid_columnconfigure(0, weight=1)
         self.sn_btn = GradientButton(
-            frame, text="Split Stems", height=46, icon="audio-lines",
+            btnrow, text="Split Stems", height=46, icon="audio-lines",
             busy_text="Splitting", command=self.on_sonara_split, state="disabled",
         )
-        self.sn_btn.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 10))
+        self.sn_btn.grid(row=0, column=0, sticky="ew")
+        self._clear_button(btnrow, self.reset_sonara).grid(row=0, column=1, padx=(10, 0))
 
         self.sn_progress = ctk.CTkProgressBar(frame, height=8)
         self.sn_progress.set(0)
@@ -3640,6 +3833,19 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             self.sonara_player.close()
             self.sonara_player = None
         self.sonara_result = None
+
+    def reset_sonara(self):
+        # Bump the generation counter so an in-flight split's _sonara_done no-ops.
+        self._sn_run += 1
+        self._sn_close_player()
+        self.sn_player_card.grid_remove()
+        self._reset_image_tool(
+            file_attr="sonara_file", icon_label=self.sn_icon_label,
+            drop_icon=self.sn_drop_icon, primary=self.sn_primary,
+            secondary=self.sn_secondary, primary_text="Drag & drop a song here",
+            hint_text="or click to browse  ·  MP3 · WAV · FLAC · M4A · OGG · MP4",
+            button=self.sn_btn, progress=self.sn_progress, status=self.sn_status,
+            status_text="Drop a song to begin.")
 
     def _sn_toggle_play(self):
         player = self.sonara_player
@@ -3885,6 +4091,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.nxc_copy = ctk.CTkButton(
             actions, text="Copy result", width=130, command=self._nxc_copy)
         self.nxc_copy.grid(row=0, column=1)
+        ctk.CTkButton(
+            actions, text="Reset", width=90, fg_color="transparent", border_width=1,
+            border_color=MUTED, text_color=NAV_TEXT,
+            hover_color=("#EBE0E1", "#2A2426"), command=self.reset_nxc,
+        ).grid(row=0, column=2, padx=(10, 0))
         self._make_labels_wrap(res, (self.nxc_result, self.nxc_detail))
 
         self.nxc_status = ctk.CTkLabel(
@@ -4181,6 +4392,25 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.clipboard_append(text)
         self.nxc_status.configure(text=f"✓  Copied: {text}", text_color=SUCCESS)
 
+    def reset_nxc(self):
+        """Reset all three converter categories to their defaults and recompute."""
+        self.nxc_amount.delete(0, "end")
+        self.nxc_amount.insert(0, "1")
+        self._nxc_currency_choices = self._currency_choices()
+        self.nxc_from.set(currency_label("USD") if "USD" in (self.nx_rates or {})
+                          else self._nxc_currency_choices[0])
+        self.nxc_to.set(currency_label("EUR"))
+        self._nxc_unit_cat_change(DEFAULT_UNIT_CATEGORY)
+        self.nxc_value.delete(0, "end")
+        self.nxc_value.insert(0, "1")
+        self.nxc_dt.delete(0, "end")
+        self.nxc_dt.insert(0, parse_datetime("now").strftime("%Y-%m-%d %H:%M"))
+        self.nxc_tz_from.set("Asia/Dubai" if "Asia/Dubai" in self._nxc_tz_list else "UTC")
+        self.nxc_tz_to.set("America/New_York"
+                           if "America/New_York" in self._nxc_tz_list else "UTC")
+        self.nxc_status.configure(text="", text_color=MUTED)
+        self._nxc_compute()
+
     # ---- nexus converter: currency rate loading -------------------------- #
     def _nx_ensure_rates(self) -> dict:
         if self.nx_rates is None:
@@ -4406,9 +4636,18 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             prev, text="Save QR Code", height=44, icon="qr-code",
             busy_text="Generating", command=self.on_nxq_save, state="disabled")
         self.nxq_btn.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
+        actions = ctk.CTkFrame(prev, fg_color="transparent")
+        actions.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 18))
+        actions.grid_columnconfigure(0, weight=1)
+        actions.grid_columnconfigure(1, weight=1)
         self.nxq_copy_btn = ctk.CTkButton(
-            prev, text="Copy image", command=self._nxq_copy_image, state="disabled")
-        self.nxq_copy_btn.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 18))
+            actions, text="Copy image", command=self._nxq_copy_image, state="disabled")
+        self.nxq_copy_btn.grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ctk.CTkButton(
+            actions, text="Clear", fg_color="transparent", border_width=1,
+            border_color=MUTED, text_color=NAV_TEXT,
+            hover_color=("#EBE0E1", "#2A2426"), command=self.reset_nxq,
+        ).grid(row=0, column=1, sticky="ew", padx=(6, 0))
 
         self.nxq_status = ctk.CTkLabel(
             panel, text="", text_color=MUTED, anchor="w", justify="left",
@@ -4628,6 +4867,31 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             except Exception:  # noqa: BLE001
                 self.nxq_status.configure(text="Couldn't copy the QR code.",
                                           text_color=ERROR)
+
+    def reset_nxq(self):
+        """Clear every QR field + reset the options back to their defaults."""
+        for fields in self.nxq_fields.values():
+            for w in fields.values():
+                if isinstance(w, ctk.CTkTextbox):
+                    w.delete("1.0", "end")
+                elif isinstance(w, ctk.CTkCheckBox):
+                    w.deselect()
+                elif isinstance(w, ctk.CTkSegmentedButton):
+                    w.set(WIFI_ENCRYPTIONS[0])
+                elif isinstance(w, ctk.CTkEntry):
+                    w.delete(0, "end")
+        self.nxq_ec.set("M")
+        self.nxq_scale.set(10)
+        self.nxq_scale_lbl.configure(text="10 px")
+        self.nxq_margin.set(4)
+        self.nxq_margin_lbl.configure(text="4")
+        self.nxq_fg, self.nxq_bg = "#000000", "#FFFFFF"
+        self.nxq_fg_btn.configure(fg_color=self.nxq_fg)
+        self.nxq_bg_btn.configure(fg_color=self.nxq_bg)
+        self.nx_qr_logo = None
+        self.nxq_logo_label.configure(text="No logo")
+        self.nxq_status.configure(text="", text_color=MUTED)
+        self._nxq_compute()
 
 
 def _run_cli(args) -> int:

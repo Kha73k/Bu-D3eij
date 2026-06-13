@@ -30,6 +30,23 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 
 ## Completed
 
+### 2026-06-13 — Scrollable pages + Clear/Reset everywhere (v4.2.1)
+- **`ScrollArea`** now hosts the page frames (root col 1): a `tk.Canvas` +
+  `CTkScrollbar` + inner `CTkFrame`. Pages grid into `_scroll_area.inner` (==
+  `_frame_container`) unchanged. `_sync` sets the inner window height to
+  `max(canvas_h, content_reqheight)`, so pages **fill the viewport when large**
+  (weight rows still expand — no visual change) and **scroll when the window is
+  shrunk** below a page's natural height (scrollbar + mouse wheel). `_on_wheel`
+  (single `bind_all`) no-ops unless the page overflows, so the Recent list /
+  textboxes keep their own wheel. `_toggle_appearance` → `refresh_bg()` (raw
+  canvas bg isn't themed); `show_frame` → `to_top()`.
+- **Clear/Reset on every tool page** that lacked one (Converter + AI Detector
+  already had it): YouTube, Batch, Marquee ×2, Vanguard OCR + Font, Sonara, Nexus
+  Converter + QR. Outlined button via `_clear_button`; drop-zone panels share
+  `_reset_image_tool`. `reset_sonara` also closes the player + bumps `_sn_run`.
+- Tests: gui smoke +8 (scroll show/hide both ways, six reset handlers) → 89 green;
+  headless unchanged (83).
+
 ### 2026-06-13 — Nexus polish (currency names/pegs + searchable zones)
 Follow-up to the v4.2 Nexus section after a first exe build + review:
 - **Currency dropdowns now show full names** (`currency_label` → `USD (US Dollar)`;

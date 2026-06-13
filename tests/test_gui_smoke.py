@@ -34,6 +34,33 @@ for name in app.NAV_ITEMS:
 check("all 10 frames switch", True)
 check("_current_frame tracks", a._current_frame == app.NAV_ITEMS[-1], a._current_frame)
 
+# scroll area: fills the viewport when large (no scrollbar), scrolls when small
+a.minsize(400, 300)
+a.geometry("1100x820")
+a.update()
+a.show_frame("Converter")
+a.update()
+a._scroll_area._sync()
+a.update()
+check("scrollbar hidden when content fits",
+      a._scroll_area._sb.winfo_manager() != "grid",
+      a._scroll_area._sb.winfo_manager())
+a.geometry("900x340")
+a.update()
+a.show_frame("Nexus")
+a.update()
+a.nx_tool.set("QR Code")
+a._show_nx_tool("QR Code")
+a._show_nxq_type("vCard")
+a.update()
+a._scroll_area._sync()
+a.update()
+check("scrollbar shows when window too small",
+      a._scroll_area._sb.winfo_manager() == "grid",
+      a._scroll_area._sb.winfo_manager())
+a.geometry("1100x820")
+a.update()
+
 # new widgets exist
 check("upscaler FIT selector", hasattr(a, "up_fit") and a.up_fit.get() == "Pad")
 check("batch status label", hasattr(a, "batch_status"))
@@ -235,6 +262,48 @@ check("qr live render + save enabled",
 a._show_nxq_type("Wi-Fi")  # type swap (image -> placeholder, no CTkImage crash)
 a.update()
 check("qr wifi group now shown", a.nxq_groups["Wi-Fi"].winfo_manager() == "grid")
+
+# v4.2.1: Clear/Reset buttons on the tool pages that lacked them
+a.show_frame("YouTube")
+a.update()
+a.yt_url.insert(0, "https://example.com/watch")
+a.reset_youtube()
+check("youtube reset clears url", a.yt_url.get() == "")
+a.show_frame("Batch Convert")
+a.update()
+a.batch_files = [Path("x")]
+a.batch_primary.configure(text="3 file(s)")
+a.reset_batch()
+check("batch reset clears files",
+      a.batch_files == [] and "Drop multiple" in a.batch_primary.cget("text"))
+a.show_frame("Marquee")
+a.update()
+a.marquee_file = Path("x.png")
+a.mq_btn.configure(state="normal")
+a.reset_marquee()
+check("marquee reset disables run + clears file",
+      a.marquee_file is None and not a.mq_btn._enabled)
+a.show_frame("Vanguard")
+a.update()
+a.vg_font_file = Path("x.png")
+a.vgf_results.grid()
+a.reset_vg_font()
+check("font reset hides results", a.vgf_results.winfo_manager() == "")
+a.show_frame("Nexus")
+a.update()
+a._show_nx_tool("Converter")
+a._show_nxc_cat("Currency")
+a.nxc_amount.delete(0, "end")
+a.nxc_amount.insert(0, "999")
+a.reset_nxc()
+check("nexus converter reset restores amount", a.nxc_amount.get() == "1")
+a._show_nx_tool("QR Code")
+a._show_nxq_type("Wi-Fi")
+a.nxq_fields["Wi-Fi"]["ssid"].insert(0, "Net")
+a.nxq_scale.set(20)
+a.reset_nxq()
+check("qr reset clears fields + options",
+      a.nxq_fields["Wi-Fi"]["ssid"].get() == "" and int(a.nxq_scale.get()) == 10)
 
 # v3.1.5/v3.2/v4.0/v4.2: all nine action buttons share the animated GradientButton design
 for name, btn, busy in [("convert", a.convert_btn, "Converting"),
