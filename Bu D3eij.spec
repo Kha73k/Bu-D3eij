@@ -4,7 +4,7 @@ from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 from PyInstaller.utils.hooks import copy_metadata
 
-datas = [('AppLogo.ico', '.'), ('DashboardLogo.png', '.'), ('bud3eij_theme.json', '.'), ('assets', 'assets')]
+datas = [('AppLogo.ico', '.'), ('DashboardLogo.png', '.'), ('bud3eij_theme.json', '.'), ('assets', 'assets'), ('assets/data/rates_seed.json', 'assets/data')]
 binaries = []
 hiddenimports = ['tabulate', 'win32timezone']
 datas += collect_data_files('pdfminer')
@@ -55,6 +55,12 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('kornia')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('torchvision')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('pint')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('tzdata')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('qrcode')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 

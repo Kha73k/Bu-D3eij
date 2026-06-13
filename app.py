@@ -68,6 +68,28 @@ from bud3eij.sonara import (  # noqa: F401
     split_stems,
 )
 from bud3eij.stemplayer import StemPlayer  # noqa: F401
+from bud3eij.nexus import (  # noqa: F401
+    COMMON_TIMEZONES,
+    CURRENCY_NAMES,
+    DEFAULT_UNIT_CATEGORY,
+    QR_EC_LEVELS,
+    QR_TYPES,
+    UNIT_CATEGORIES,
+    WIFI_ENCRYPTIONS,
+    WORLD_CLOCK_ZONES,
+    build_qr_payload,
+    convert_currency,
+    convert_timezone,
+    convert_units,
+    currency_label,
+    list_timezones,
+    load_rates,
+    make_qr,
+    parse_datetime,
+    refresh_rates,
+    save_qr,
+    tz_offset_str,
+)
 
 
 def resource_path(rel: str) -> str:
@@ -164,7 +186,7 @@ def _setup_frozen_logging() -> None:
 # --------------------------------------------------------------------------- #
 APP_NAME = "Bu D3eij"
 NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "YouTube", "Marquee",
-             "Vanguard", "Sonara", "Tools"]
+             "Vanguard", "Sonara", "Nexus", "Tools"]
 
 # Logo-derived palette (extracted from AppLogo.png).
 RED = "#E11414"
@@ -188,7 +210,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "4.1"
+APP_VERSION = "4.2"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -208,7 +230,8 @@ def icon_key_for_ext(ext: str) -> str:
 NAV_ICONS = {
     "Home": "house", "Converter": "repeat", "Recent": "clock",
     "Batch Convert": "layers", "YouTube": "youtube", "Marquee": "sparkles",
-    "Vanguard": "shield-check", "Sonara": "audio-lines", "Tools": "wrench",
+    "Vanguard": "shield-check", "Sonara": "audio-lines", "Nexus": "compass",
+    "Tools": "wrench",
 }
 
 # Sonara stem rows: stem key -> (display name, assets/ui icon).
@@ -953,6 +976,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.sonara_file: Path | None = None
         self.sonara_player = None            # StemPlayer while stems are loaded
         self.sonara_result: dict | None = None  # last split_stems result
+        self.nx_rates: dict | None = None    # loaded currency rate table (lazy)
+        self.nx_qr_logo: Path | None = None  # optional QR centre-logo image
+        self.nx_qr_image = None              # last rendered QR PIL image (for copy)
+        self._nxc_after = None               # converter live-recompute debounce
+        self._nxq_after = None               # QR live-preview debounce
         self.batch_export_dir: Path | None = None
         self.history: list[dict] = load_history()
         self.appearance_mode = "Dark"  # toggled by the sun/moon button
@@ -1194,6 +1222,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             "Marquee": self._build_marquee,
             "Vanguard": self._build_vanguard,
             "Sonara": self._build_sonara,
+            "Nexus": self._build_nexus,
             "Home": self._build_home,
             "Recent": self._build_recent,
             "Tools": self._build_tools,
@@ -3729,6 +3758,877 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if self.sonara_file:
             self.add_history(self.sonara_file, out, True)
 
+    # ===================================================================== #
+    # Nexus — everyday utilities (Converter + QR Code)
+    # ===================================================================== #
+    def _build_nexus(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
+        self._section_header(
+            frame, "Nexus",
+            "Everyday utilities — convert currency, units and time zones, or "
+            "make a QR code. All local, no account, no limits.",
+        )
+
+        # ---- tool switcher (same pattern as Marquee / Vanguard) ----
+        switch = ctk.CTkFrame(frame, fg_color="transparent")
+        switch.grid(row=1, column=0, sticky="w", padx=24, pady=(2, 6))
+        self.nx_tool = ctk.CTkSegmentedButton(
+            switch, values=["Converter", "QR Code"], command=self._show_nx_tool,
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.nx_tool.set("Converter")
+        self.nx_tool.grid(row=0, column=0)
+
+        # ---- tool panels (only one shown at a time) ----
+        container = ctk.CTkFrame(frame, fg_color="transparent")
+        container.grid(row=2, column=0, sticky="nsew")
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_rowconfigure(0, weight=1)
+        self.nx_panels = {
+            "Converter": self._build_nx_convert(container),
+            "QR Code": self._build_nx_qr(container),
+        }
+        for p in self.nx_panels.values():
+            p.grid(row=0, column=0, sticky="nsew")
+        self._show_nx_tool("Converter")
+        return frame
+
+    def _show_nx_tool(self, name: str):
+        for n, panel in self.nx_panels.items():
+            (panel.grid if n == name else panel.grid_remove)()
+
+    # ---- shared live-conversion helpers ---------------------------------- #
+    def _bind_typing(self, widget, handler) -> None:
+        """Fire `handler` live as the user types (entry or combobox)."""
+        for t in (widget, getattr(widget, "_entry", None)):
+            if t is None:
+                continue
+            try:
+                t.bind("<KeyRelease>", handler, add="+")
+            except Exception:  # noqa: BLE001
+                pass
+
+    @staticmethod
+    def _parse_float(text: str):
+        text = (text or "").strip().replace(",", "")
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _fmt_num(x: float) -> str:
+        """Tidy number: integers grouped, otherwise 6 significant figures."""
+        if abs(x) < 1e15 and float(x).is_integer():
+            return f"{int(x):,}"
+        return f"{x:,.6g}"
+
+    def _fmt_money(self, x: float) -> str:
+        return f"{x:,.2f}" if abs(x) >= 1 else f"{x:,.6f}"
+
+    @staticmethod
+    def _code_from_label(label: str) -> str:
+        return (label or "").strip().split(" — ")[0].split()[0].upper() if label else ""
+
+    # ---- nexus: converter panel ------------------------------------------ #
+    def _build_nx_convert(self, parent) -> ctk.CTkFrame:
+        panel = ctk.CTkFrame(parent, fg_color="transparent")
+        panel.grid_columnconfigure(0, weight=1)
+
+        cat = ctk.CTkFrame(panel, fg_color="transparent")
+        cat.grid(row=0, column=0, sticky="w", padx=24, pady=(4, 8))
+        self.nxc_cat = ctk.CTkSegmentedButton(
+            cat, values=["Currency", "Units", "Time Zone"],
+            command=self._show_nxc_cat,
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.nxc_cat.set("Currency")
+        self.nxc_cat.grid(row=0, column=0)
+
+        # input card holds the three swappable category sub-frames
+        incard = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        incard.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 10))
+        incard.grid_columnconfigure(0, weight=1)
+        incard.grid_rowconfigure(0, weight=1)
+        self.nxc_frames = {
+            "Currency": self._build_nxc_currency(incard),
+            "Units": self._build_nxc_units(incard),
+            "Time Zone": self._build_nxc_timezone(incard),
+        }
+        for f in self.nxc_frames.values():
+            f.grid(row=0, column=0, sticky="nsew")
+
+        # shared result + actions card
+        res = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        res.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 10))
+        res.grid_columnconfigure(0, weight=1)
+        self.nxc_result = ctk.CTkLabel(
+            res, text="—", font=self._font(26, "semibold"), text_color=RED,
+            anchor="w", justify="left", wraplength=560)
+        self.nxc_result.grid(row=0, column=0, sticky="w", padx=18, pady=(14, 0))
+        self.nxc_detail = ctk.CTkLabel(
+            res, text="", text_color=MUTED, anchor="w", justify="left",
+            wraplength=560)
+        self.nxc_detail.grid(row=1, column=0, sticky="w", padx=18, pady=(2, 8))
+        actions = ctk.CTkFrame(res, fg_color="transparent")
+        actions.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 14))
+        self.nxc_swap = ctk.CTkButton(
+            actions, text=" Swap", width=104, image=self._ui_icon("arrow-left-right", 16),
+            compound="left", fg_color="transparent", border_width=1, border_color=MUTED,
+            text_color=NAV_TEXT, hover_color=("#EBE0E1", "#2A2426"),
+            command=self._nxc_swap)
+        self.nxc_swap.grid(row=0, column=0, padx=(0, 10))
+        self.nxc_copy = ctk.CTkButton(
+            actions, text="Copy result", width=130, command=self._nxc_copy)
+        self.nxc_copy.grid(row=0, column=1)
+        self._make_labels_wrap(res, (self.nxc_result, self.nxc_detail))
+
+        self.nxc_status = ctk.CTkLabel(
+            panel, text="", text_color=MUTED, anchor="w", justify="left",
+            wraplength=620)
+        self.nxc_status.grid(row=3, column=0, sticky="w", padx=24, pady=(0, 8))
+
+        self._show_nxc_cat("Currency")
+        return panel
+
+    def _show_nxc_cat(self, name: str):
+        self.nxc_cat.set(name)  # keep state correct when called programmatically
+        for n, f in self.nxc_frames.items():
+            (f.grid if n == name else f.grid_remove)()
+        self._nxc_compute()
+
+    def _build_nxc_currency(self, parent) -> ctk.CTkFrame:
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.grid_columnconfigure(0, weight=1)
+        # rates load lazily from cache/seed; populate the dropdowns from them
+        try:
+            self._nx_ensure_rates()
+        except Exception as exc:  # noqa: BLE001
+            print("Could not load currency rates:", exc)
+        self._nxc_currency_choices = self._currency_choices()
+        choices = self._nxc_currency_choices
+
+        row = ctk.CTkFrame(f, fg_color="transparent")
+        row.grid(row=0, column=0, sticky="w", padx=18, pady=(14, 4))
+        ctk.CTkLabel(row, text="AMOUNT", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, sticky="w", padx=2)
+        ctk.CTkLabel(row, text="FROM  (type to search)", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=1, sticky="w", padx=2)
+        ctk.CTkLabel(row, text="TO", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=3, sticky="w", padx=(16, 2))
+        self.nxc_amount = ctk.CTkEntry(row, width=90)
+        self.nxc_amount.insert(0, "1")
+        self.nxc_amount.grid(row=1, column=0, padx=(2, 12))
+        self._bind_typing(self.nxc_amount, self._nxc_schedule)
+        self.nxc_from = ctk.CTkComboBox(row, values=choices, width=215,
+                                        command=lambda _v: self._nxc_schedule())
+        self.nxc_from.set(currency_label("USD") if "USD" in (self.nx_rates or {})
+                          else choices[0])
+        self.nxc_from.grid(row=1, column=1)
+        self._attach_search(self.nxc_from, lambda: self._nxc_currency_choices,
+                            self._nxc_schedule)
+        ctk.CTkLabel(row, text="→", font=self._font(20, "semibold"),
+                     text_color=RED).grid(row=1, column=2, padx=10)
+        self.nxc_to = ctk.CTkComboBox(row, values=choices, width=215,
+                                      command=lambda _v: self._nxc_schedule())
+        self.nxc_to.set(currency_label("EUR"))
+        self.nxc_to.grid(row=1, column=3)
+        self._attach_search(self.nxc_to, lambda: self._nxc_currency_choices,
+                            self._nxc_schedule)
+
+        rrow = ctk.CTkFrame(f, fg_color="transparent")
+        rrow.grid(row=1, column=0, sticky="w", padx=18, pady=(8, 14))
+        self.nxc_rates_label = ctk.CTkLabel(rrow, text="", text_color=MUTED)
+        self.nxc_rates_label.grid(row=0, column=0, padx=(0, 12))
+        self.nxc_refresh = ctk.CTkButton(
+            rrow, text=" Refresh", width=104, image=self._ui_icon("repeat", 14),
+            compound="left", fg_color="transparent", border_width=1, border_color=MUTED,
+            text_color=NAV_TEXT, hover_color=("#EBE0E1", "#2A2426"),
+            command=self._nxc_refresh_rates)
+        self.nxc_refresh.grid(row=0, column=1)
+        self._nxc_update_rates_label()
+        return f
+
+    def _build_nxc_units(self, parent) -> ctk.CTkFrame:
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.grid_columnconfigure(0, weight=1)
+        catrow = ctk.CTkFrame(f, fg_color="transparent")
+        catrow.grid(row=0, column=0, sticky="w", padx=18, pady=(14, 6))
+        ctk.CTkLabel(catrow, text="CATEGORY", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, padx=(0, 10))
+        self.nxc_unit_cat = ctk.CTkOptionMenu(
+            catrow, values=list(UNIT_CATEGORIES), width=170,
+            command=self._nxc_unit_cat_change)
+        self.nxc_unit_cat.set(DEFAULT_UNIT_CATEGORY)
+        self.nxc_unit_cat.grid(row=0, column=1)
+
+        row = ctk.CTkFrame(f, fg_color="transparent")
+        row.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 14))
+        ctk.CTkLabel(row, text="VALUE", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, sticky="w", padx=2)
+        ctk.CTkLabel(row, text="FROM", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=1, sticky="w", padx=2)
+        ctk.CTkLabel(row, text="TO", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=3, sticky="w", padx=(16, 2))
+        self.nxc_value = ctk.CTkEntry(row, width=100)
+        self.nxc_value.insert(0, "1")
+        self.nxc_value.grid(row=1, column=0, padx=(2, 12))
+        self._bind_typing(self.nxc_value, self._nxc_schedule)
+        self.nxc_unit_from = ctk.CTkOptionMenu(
+            row, values=["-"], width=180, command=lambda _v: self._nxc_schedule())
+        self.nxc_unit_from.grid(row=1, column=1)
+        ctk.CTkLabel(row, text="→", font=self._font(20, "semibold"),
+                     text_color=RED).grid(row=1, column=2, padx=10)
+        self.nxc_unit_to = ctk.CTkOptionMenu(
+            row, values=["-"], width=180, command=lambda _v: self._nxc_schedule())
+        self.nxc_unit_to.grid(row=1, column=3)
+        self._nxc_unit_cat_change(DEFAULT_UNIT_CATEGORY)
+        return f
+
+    def _nxc_unit_cat_change(self, cat: str):
+        labels = [lbl for lbl, _ in UNIT_CATEGORIES.get(cat, [])]
+        if not labels:
+            return
+        self.nxc_unit_cat.set(cat)  # keep state correct when called programmatically
+        self.nxc_unit_from.configure(values=labels)
+        self.nxc_unit_to.configure(values=labels)
+        self.nxc_unit_from.set(labels[0])
+        self.nxc_unit_to.set(labels[1] if len(labels) > 1 else labels[0])
+        self._nxc_schedule()
+
+    def _build_nxc_timezone(self, parent) -> ctk.CTkFrame:
+        f = ctk.CTkFrame(parent, fg_color="transparent")
+        f.grid_columnconfigure(0, weight=1)
+        # Full IANA set for search; show the short curated list until the user types.
+        self._nxc_tz_list = list_timezones()
+        self._nxc_tz_common = [z for z in COMMON_TIMEZONES
+                               if z in self._nxc_tz_list] or self._nxc_tz_list
+        common = self._nxc_tz_common
+
+        row = ctk.CTkFrame(f, fg_color="transparent")
+        row.grid(row=0, column=0, sticky="w", padx=18, pady=(14, 4))
+        ctk.CTkLabel(row, text="DATE & TIME", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, sticky="w", padx=2)
+        self.nxc_dt = ctk.CTkEntry(row, width=190)
+        self.nxc_dt.insert(0, parse_datetime("now").strftime("%Y-%m-%d %H:%M"))
+        self.nxc_dt.grid(row=1, column=0, padx=(2, 8))
+        self._bind_typing(self.nxc_dt, self._nxc_schedule)
+        ctk.CTkButton(row, text="Now", width=60, fg_color="transparent",
+                      border_width=1, border_color=MUTED, text_color=NAV_TEXT,
+                      hover_color=("#EBE0E1", "#2A2426"),
+                      command=self._nxc_set_now).grid(row=1, column=1)
+
+        zrow = ctk.CTkFrame(f, fg_color="transparent")
+        zrow.grid(row=1, column=0, sticky="w", padx=18, pady=(8, 8))
+        ctk.CTkLabel(zrow, text="FROM ZONE  (type to search)",
+                     font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, sticky="w", padx=2)
+        ctk.CTkLabel(zrow, text="TO ZONE  (type to search)",
+                     font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=2, sticky="w", padx=(16, 2))
+        self.nxc_tz_from = ctk.CTkComboBox(zrow, values=common, width=240,
+                                           command=lambda _v: self._nxc_schedule())
+        self.nxc_tz_from.set("Asia/Dubai" if "Asia/Dubai" in self._nxc_tz_list else "UTC")
+        self.nxc_tz_from.grid(row=1, column=0)
+        self._attach_search(self.nxc_tz_from, lambda: self._nxc_tz_list,
+                            self._nxc_schedule, lambda: self._nxc_tz_common)
+        ctk.CTkLabel(zrow, text="→", font=self._font(20, "semibold"),
+                     text_color=RED).grid(row=1, column=1, padx=10)
+        self.nxc_tz_to = ctk.CTkComboBox(zrow, values=common, width=240,
+                                         command=lambda _v: self._nxc_schedule())
+        self.nxc_tz_to.set("America/New_York"
+                           if "America/New_York" in self._nxc_tz_list else "UTC")
+        self.nxc_tz_to.grid(row=1, column=2)
+        self._attach_search(self.nxc_tz_to, lambda: self._nxc_tz_list,
+                            self._nxc_schedule, lambda: self._nxc_tz_common)
+
+        # pinned world clock
+        wc = ctk.CTkFrame(f, fg_color="transparent")
+        wc.grid(row=2, column=0, sticky="w", padx=18, pady=(4, 14))
+        ctk.CTkLabel(wc, text="WORLD CLOCK", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, columnspan=2,
+                                            sticky="w", pady=(0, 2))
+        self.nxc_world_rows = {}
+        for i, z in enumerate(WORLD_CLOCK_ZONES):
+            ctk.CTkLabel(wc, text=z, text_color=TEXT, anchor="w", width=150).grid(
+                row=1 + i, column=0, sticky="w")
+            lbl = ctk.CTkLabel(wc, text="—", text_color=MUTED, anchor="w")
+            lbl.grid(row=1 + i, column=1, sticky="w", padx=(12, 0))
+            self.nxc_world_rows[z] = lbl
+        return f
+
+    def _nxc_set_now(self):
+        self.nxc_dt.delete(0, "end")
+        self.nxc_dt.insert(0, parse_datetime("now").strftime("%Y-%m-%d %H:%M"))
+        self._nxc_compute()
+
+    # ---- nexus converter: live recompute --------------------------------- #
+    def _nxc_schedule(self, *_):
+        if self._nxc_after is not None:
+            try:
+                self.after_cancel(self._nxc_after)
+            except Exception:  # noqa: BLE001
+                pass
+        self._nxc_after = self.after(150, self._nxc_compute)
+
+    def _nxc_compute(self):
+        self._nxc_after = None
+        cat = self.nxc_cat.get()
+        try:
+            if cat == "Currency":
+                self._nxc_compute_currency()
+            elif cat == "Units":
+                self._nxc_compute_units()
+            else:
+                self._nxc_compute_tz()
+        except ConversionError as exc:
+            self._nxc_show(None, "", str(exc), warn=True)
+        except Exception as exc:  # noqa: BLE001
+            self._nxc_show(None, "", str(exc), warn=True)
+
+    def _nxc_show(self, result: str | None, detail: str, status: str = "",
+                  warn: bool = False, copy: str = ""):
+        self.nxc_result.configure(text=result if result else "—")
+        self.nxc_detail.configure(text=detail)
+        self.nxc_status.configure(text=status, text_color=WARNING if warn else MUTED)
+        self._nxc_copy_text = copy
+
+    def _nxc_compute_currency(self):
+        rates = self._nx_ensure_rates()
+        amount = self._parse_float(self.nxc_amount.get())
+        src = self._code_from_label(self.nxc_from.get())
+        dst = self._code_from_label(self.nxc_to.get())
+        if amount is None or not src or not dst:
+            self._nxc_show(None, "Enter an amount and pick two currencies.")
+            return
+        if src not in rates or dst not in rates:
+            missing = src if src not in rates else dst
+            self._nxc_show(None, "", f"No rate available for {missing}.", warn=True)
+            return
+        result = convert_currency(amount, src, dst, rates)
+        one = convert_currency(1, src, dst, rates)
+        inv = convert_currency(1, dst, src, rates)
+        self._nxc_show(
+            f"{self._fmt_money(result)} {dst}",
+            f"{self._fmt_money(amount)} {src} = {self._fmt_money(result)} {dst}\n"
+            f"1 {src} = {one:,.4f} {dst}   ·   1 {dst} = {inv:,.4f} {src}",
+            copy=f"{result:.4f} {dst}")
+
+    def _nxc_compute_units(self):
+        cat = self.nxc_unit_cat.get()
+        umap = dict(UNIT_CATEGORIES.get(cat, []))
+        value = self._parse_float(self.nxc_value.get())
+        src_label, dst_label = self.nxc_unit_from.get(), self.nxc_unit_to.get()
+        if value is None or src_label not in umap or dst_label not in umap:
+            self._nxc_show(None, "Enter a value and pick two units.")
+            return
+        result = convert_units(value, umap[src_label], umap[dst_label])
+        self._nxc_show(
+            f"{self._fmt_num(result)} {dst_label}",
+            f"{self._fmt_num(value)} {src_label} = {self._fmt_num(result)} {dst_label}",
+            copy=self._fmt_num(result))
+
+    def _nxc_compute_tz(self):
+        dt = parse_datetime(self.nxc_dt.get())
+        src, dst = self.nxc_tz_from.get().strip(), self.nxc_tz_to.get().strip()
+        out = convert_timezone(dt, src, dst)
+        src_dt = convert_timezone(dt, src, src)
+        day_delta = (out.date() - src_dt.date()).days
+        note = ""
+        if day_delta == 1:
+            note = "  (next day)"
+        elif day_delta == -1:
+            note = "  (previous day)"
+        elif day_delta != 0:
+            note = f"  ({day_delta:+d} days)"
+        self._nxc_show(
+            out.strftime("%a, %d %b %Y  %H:%M"),
+            f"{src}: {src_dt:%H:%M} ({tz_offset_str(src_dt)})   →   "
+            f"{dst}: {out:%H:%M} ({tz_offset_str(out)}){note}",
+            copy=out.strftime("%Y-%m-%d %H:%M %Z"))
+        self._nxc_update_world_clock()
+
+    def _nxc_update_world_clock(self):
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo
+
+        for z, lbl in getattr(self, "nxc_world_rows", {}).items():
+            try:
+                now = _dt.now(ZoneInfo(z))
+                lbl.configure(text=now.strftime("%H:%M  ·  %a %d %b"))
+            except Exception:  # noqa: BLE001
+                lbl.configure(text="—")
+
+    def _nxc_swap(self):
+        cat = self.nxc_cat.get()
+        pair = {"Currency": (self.nxc_from, self.nxc_to),
+                "Units": (self.nxc_unit_from, self.nxc_unit_to),
+                "Time Zone": (self.nxc_tz_from, self.nxc_tz_to)}[cat]
+        a, b = pair[0].get(), pair[1].get()
+        pair[0].set(b)
+        pair[1].set(a)
+        self._nxc_compute()
+
+    def _nxc_copy(self):
+        text = getattr(self, "_nxc_copy_text", "")
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.nxc_status.configure(text=f"✓  Copied: {text}", text_color=SUCCESS)
+
+    # ---- nexus converter: currency rate loading -------------------------- #
+    def _nx_ensure_rates(self) -> dict:
+        if self.nx_rates is None:
+            data = load_rates()
+            self.nx_rates = data["rates"]
+            self._nx_rates_date = data["date"]
+            self._nx_rates_source = data["source"]
+        return self.nx_rates
+
+    def _currency_codes(self) -> list[str]:
+        rates = self.nx_rates or {"EUR": 1.0, "USD": 1.0, "GBP": 1.0, "JPY": 1.0}
+        priority = ["USD", "EUR", "GBP", "BHD", "AED", "SAR", "JPY", "CAD", "CHF"]
+        front = [c for c in priority if c in rates]
+        rest = sorted(c for c in rates if c not in front)
+        return front + rest
+
+    def _currency_choices(self) -> list[str]:
+        """Combobox labels like ``USD (US Dollar)`` in priority-then-A-Z order."""
+        return [currency_label(c) for c in self._currency_codes()]
+
+    def _attach_search(self, combo, get_values, on_change, get_default=None) -> None:
+        """Make a CTkComboBox filter its dropdown list as the user types.
+
+        The full IANA / currency lists are too long to scroll; typing narrows the
+        dropdown (prefix matches first, then substring) so the next time the menu
+        is opened it shows only the matches. `get_values()` is the full search
+        corpus (so a currency refresh is picked up); when the field is cleared the
+        dropdown falls back to `get_default()` (a short curated list for zones, or
+        the full list for currencies if not given).
+        """
+        entry = getattr(combo, "_entry", None)
+
+        def handler(_e=None):
+            typed = (entry.get() if entry is not None else combo.get()).strip().lower()
+            if typed:
+                values = get_values()
+                pref = [v for v in values if v.lower().startswith(typed)]
+                sub = [v for v in values if typed in v.lower() and v not in pref]
+                shown = (pref + sub)[:40] or ["(no match)"]
+            else:
+                shown = (get_default or get_values)()
+            combo.configure(values=shown)
+            on_change()
+
+        if entry is not None:
+            entry.bind("<KeyRelease>", handler, add="+")
+
+    def _nxc_update_rates_label(self):
+        if not hasattr(self, "nxc_rates_label"):
+            return
+        date = getattr(self, "_nx_rates_date", "?")
+        source = {"network": "live", "cache": "cached",
+                  "seed": "bundled snapshot"}.get(getattr(self, "_nx_rates_source", ""), "")
+        self.nxc_rates_label.configure(text=f"Rates as of {date}  ·  {source}")
+
+    def _nxc_refresh_rates(self):
+        self.nxc_refresh.configure(state="disabled")
+        self.nxc_rates_label.configure(text="Fetching today's rates…")
+        self._job_started()
+        threading.Thread(target=self._nxc_refresh_worker, daemon=True).start()
+
+    def _nxc_refresh_worker(self):
+        try:
+            data = refresh_rates()
+            self.after(0, self._nxc_refresh_done, data, None)
+        except Exception as exc:  # noqa: BLE001
+            self.after(0, self._nxc_refresh_done, None, exc)
+
+    def _nxc_refresh_done(self, data: dict | None, error: Exception | None):
+        self._job_finished()
+        self.nxc_refresh.configure(state="normal")
+        if error or not data:
+            self._nxc_update_rates_label()
+            self.nxc_status.configure(
+                text=f"Couldn't refresh rates — still using the saved set. ({error})",
+                text_color=WARNING)
+            return
+        self.nx_rates = data["rates"]
+        self._nx_rates_date = data["date"]
+        self._nx_rates_source = data["source"]
+        self._nxc_currency_choices = self._currency_choices()
+        self.nxc_from.configure(values=self._nxc_currency_choices)
+        self.nxc_to.configure(values=self._nxc_currency_choices)
+        self._nxc_update_rates_label()
+        self.nxc_status.configure(text="✓  Updated to today's ECB rates.",
+                                  text_color=SUCCESS)
+        self._nxc_compute()
+
+    # ---- nexus: QR code panel -------------------------------------------- #
+    QR_FIELD_SPECS = {
+        "Text / URL": [("text", "Text or URL", "textbox")],
+        "Wi-Fi": [("ssid", "Network name (SSID)", "entry"),
+                  ("password", "Password", "entry"),
+                  ("encryption", "Security", "encryption"),
+                  ("hidden", "Hidden network", "check")],
+        "Email": [("to", "Email address", "entry"),
+                  ("subject", "Subject", "entry"),
+                  ("body", "Message", "textbox")],
+        "Phone": [("number", "Phone number", "entry")],
+        "SMS": [("number", "Phone number", "entry"),
+                ("message", "Message", "textbox")],
+        "vCard": [("first", "First name", "entry"), ("last", "Last name", "entry"),
+                  ("org", "Organisation", "entry"), ("title", "Job title", "entry"),
+                  ("phone", "Phone", "entry"), ("email", "Email", "entry"),
+                  ("url", "Website", "entry")],
+        "Geo": [("lat", "Latitude", "entry"), ("lon", "Longitude", "entry")],
+    }
+
+    def _build_nx_qr(self, parent) -> ctk.CTkFrame:
+        panel = ctk.CTkFrame(parent, fg_color="transparent")
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(2, weight=1)
+
+        top = ctk.CTkFrame(panel, fg_color="transparent")
+        top.grid(row=0, column=0, columnspan=2, sticky="w", padx=24, pady=(4, 8))
+        self.nxq_type = ctk.CTkSegmentedButton(
+            top, values=QR_TYPES, command=self._show_nxq_type,
+            selected_color=RED, selected_hover_color=RED_HOVER)
+        self.nxq_type.set("Text / URL")
+        self.nxq_type.grid(row=0, column=0)
+
+        # fields card (left, swappable per type)
+        incard = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        incard.grid(row=1, column=0, sticky="new", padx=(24, 10), pady=(0, 10))
+        incard.grid_columnconfigure(0, weight=1)
+        incard.grid_rowconfigure(0, weight=1)
+        self.nxq_fields: dict[str, dict] = {}
+        self.nxq_groups: dict[str, ctk.CTkFrame] = {}
+        for t in QR_TYPES:
+            g = self._build_nxq_group(incard, t)
+            g.grid(row=0, column=0, sticky="nsew")
+            self.nxq_groups[t] = g
+
+        # options card (left, below fields)
+        opt = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        opt.grid(row=2, column=0, sticky="new", padx=(24, 10), pady=(0, 10))
+        opt.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(opt, text="OPTIONS", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, columnspan=2,
+                                            sticky="w", padx=16, pady=(12, 4))
+        ctk.CTkLabel(opt, text="Error correction", text_color=TEXT,
+                     anchor="w").grid(row=1, column=0, sticky="w", padx=16)
+        self.nxq_ec = ctk.CTkSegmentedButton(
+            opt, values=list(QR_EC_LEVELS), command=lambda _v: self._nxq_schedule(),
+            selected_color=RED, selected_hover_color=RED_HOVER)
+        self.nxq_ec.set("M")
+        self.nxq_ec.grid(row=1, column=1, sticky="w", padx=10, pady=4)
+        # module size
+        ctk.CTkLabel(opt, text="Module size", text_color=TEXT,
+                     anchor="w").grid(row=2, column=0, sticky="w", padx=16)
+        srow = ctk.CTkFrame(opt, fg_color="transparent")
+        srow.grid(row=2, column=1, sticky="w", padx=10, pady=2)
+        self.nxq_scale = ctk.CTkSlider(srow, from_=4, to=24, number_of_steps=20,
+                                       width=170, command=self._nxq_scale_change)
+        self.nxq_scale.set(10)
+        self.nxq_scale.grid(row=0, column=0)
+        self.nxq_scale_lbl = ctk.CTkLabel(srow, text="10 px", width=48,
+                                          text_color=MUTED)
+        self.nxq_scale_lbl.grid(row=0, column=1, padx=(8, 0))
+        # quiet-zone margin
+        ctk.CTkLabel(opt, text="Quiet-zone margin", text_color=TEXT,
+                     anchor="w").grid(row=3, column=0, sticky="w", padx=16)
+        mrow = ctk.CTkFrame(opt, fg_color="transparent")
+        mrow.grid(row=3, column=1, sticky="w", padx=10, pady=2)
+        self.nxq_margin = ctk.CTkSlider(mrow, from_=0, to=10, number_of_steps=10,
+                                        width=170, command=self._nxq_margin_change)
+        self.nxq_margin.set(4)
+        self.nxq_margin.grid(row=0, column=0)
+        self.nxq_margin_lbl = ctk.CTkLabel(mrow, text="4", width=48, text_color=MUTED)
+        self.nxq_margin_lbl.grid(row=0, column=1, padx=(8, 0))
+        # colors
+        ctk.CTkLabel(opt, text="Colors (FG / BG)", text_color=TEXT,
+                     anchor="w").grid(row=4, column=0, sticky="w", padx=16)
+        crow = ctk.CTkFrame(opt, fg_color="transparent")
+        crow.grid(row=4, column=1, sticky="w", padx=10, pady=4)
+        self.nxq_fg, self.nxq_bg = "#000000", "#FFFFFF"
+        self.nxq_fg_btn = ctk.CTkButton(
+            crow, text="", width=40, height=26, fg_color=self.nxq_fg,
+            border_width=1, border_color=MUTED, hover=False,
+            command=lambda: self._nxq_pick_color("fg"))
+        self.nxq_fg_btn.grid(row=0, column=0, padx=(0, 8))
+        self.nxq_bg_btn = ctk.CTkButton(
+            crow, text="", width=40, height=26, fg_color=self.nxq_bg,
+            border_width=1, border_color=MUTED, hover=False,
+            command=lambda: self._nxq_pick_color("bg"))
+        self.nxq_bg_btn.grid(row=0, column=1)
+        # center logo
+        ctk.CTkLabel(opt, text="Center logo", text_color=TEXT,
+                     anchor="w").grid(row=5, column=0, sticky="w", padx=16, pady=(2, 12))
+        lrow = ctk.CTkFrame(opt, fg_color="transparent")
+        lrow.grid(row=5, column=1, sticky="w", padx=10, pady=(2, 12))
+        ctk.CTkButton(lrow, text="Add…", width=70, command=self._nxq_pick_logo).grid(
+            row=0, column=0)
+        ctk.CTkButton(lrow, text="Clear", width=60, fg_color="transparent",
+                      border_width=1, border_color=MUTED, text_color=NAV_TEXT,
+                      hover_color=("#EBE0E1", "#2A2426"),
+                      command=self._nxq_clear_logo).grid(row=0, column=1, padx=(8, 8))
+        self.nxq_logo_label = ctk.CTkLabel(lrow, text="No logo", text_color=MUTED)
+        self.nxq_logo_label.grid(row=0, column=2)
+
+        # preview card (right). Don't grid_propagate(False) here: it would lock
+        # the height to the default 200px and clip the Save/Copy buttons below
+        # the 260px preview. The fixed-size preview label keeps the width stable.
+        prev = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        prev.grid(row=1, column=1, rowspan=2, sticky="n", padx=(0, 24), pady=(0, 10))
+        prev.grid_columnconfigure(0, weight=1)
+        # A reusable transparent placeholder: configuring a CTkLabel with
+        # image=None after it has shown an image is a CustomTkinter bug ("image
+        # doesn't exist" on the next set), and image="" warns — so the empty
+        # state swaps in this 1x1 transparent CTkImage instead.
+        from PIL import Image as _PILImage
+        self._nxq_blank = ctk.CTkImage(
+            _PILImage.new("RGBA", (1, 1), (0, 0, 0, 0)), size=(1, 1))
+        self.nxq_preview = ctk.CTkLabel(
+            prev, text="Fill in the fields to preview your QR code.",
+            width=260, height=260, wraplength=240, text_color=MUTED)
+        self.nxq_preview.grid(row=0, column=0, padx=20, pady=(20, 6))
+        self.nxq_payload_label = ctk.CTkLabel(
+            prev, text="", text_color=MUTED, font=ctk.CTkFont(size=11),
+            wraplength=240, justify="center")
+        self.nxq_payload_label.grid(row=1, column=0, padx=12, pady=(0, 10))
+        self.nxq_btn = GradientButton(
+            prev, text="Save QR Code", height=44, icon="qr-code",
+            busy_text="Generating", command=self.on_nxq_save, state="disabled")
+        self.nxq_btn.grid(row=2, column=0, sticky="ew", padx=20, pady=(0, 8))
+        self.nxq_copy_btn = ctk.CTkButton(
+            prev, text="Copy image", command=self._nxq_copy_image, state="disabled")
+        self.nxq_copy_btn.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 18))
+
+        self.nxq_status = ctk.CTkLabel(
+            panel, text="", text_color=MUTED, anchor="w", justify="left",
+            wraplength=620)
+        self.nxq_status.grid(row=3, column=0, columnspan=2, sticky="w",
+                             padx=24, pady=(0, 8))
+
+        self._show_nxq_type("Text / URL")
+        return panel
+
+    def _build_nxq_group(self, parent, kind: str) -> ctk.CTkFrame:
+        g = ctk.CTkFrame(parent, fg_color="transparent")
+        g.grid_columnconfigure(0, weight=1)
+        self.nxq_fields[kind] = {}
+        r = 0
+        for key, label, kind_w in self.QR_FIELD_SPECS[kind]:
+            if kind_w == "check":
+                w = ctk.CTkCheckBox(g, text=label, command=self._nxq_schedule,
+                                    onvalue=True, offvalue=False)
+                w.grid(row=r, column=0, sticky="w", padx=18, pady=(6, 10))
+                self.nxq_fields[kind][key] = w
+                r += 1
+                continue
+            ctk.CTkLabel(g, text=label.upper(), font=self._font(11, "medium"),
+                         text_color=MUTED).grid(row=r, column=0, sticky="w",
+                                                padx=18, pady=(8 if r == 0 else 4, 0))
+            r += 1
+            if kind_w == "encryption":
+                w = ctk.CTkSegmentedButton(
+                    g, values=WIFI_ENCRYPTIONS, command=lambda _v: self._nxq_schedule(),
+                    selected_color=RED, selected_hover_color=RED_HOVER)
+                w.set(WIFI_ENCRYPTIONS[0])
+                w.grid(row=r, column=0, sticky="w", padx=18, pady=(2, 6))
+            elif kind_w == "textbox":
+                w = ctk.CTkTextbox(g, height=70, wrap="word", border_width=1,
+                                   border_color=CARD_BORDER)
+                w.grid(row=r, column=0, sticky="ew", padx=18, pady=(2, 6))
+                self._bind_typing(w, self._nxq_schedule)
+            else:  # entry
+                w = ctk.CTkEntry(g)
+                w.grid(row=r, column=0, sticky="ew", padx=18, pady=(2, 6))
+                self._bind_typing(w, self._nxq_schedule)
+            self.nxq_fields[kind][key] = w
+            r += 1
+        return g
+
+    def _show_nxq_type(self, name: str):
+        self.nxq_type.set(name)  # keep state correct when called programmatically
+        for n, g in self.nxq_groups.items():
+            (g.grid if n == name else g.grid_remove)()
+        self._nxq_compute()
+
+    def _nxq_scale_change(self, value):
+        self.nxq_scale_lbl.configure(text=f"{int(round(value))} px")
+        self._nxq_schedule()
+
+    def _nxq_margin_change(self, value):
+        self.nxq_margin_lbl.configure(text=f"{int(round(value))}")
+        self._nxq_schedule()
+
+    def _nxq_pick_color(self, which: str):
+        from tkinter import colorchooser
+
+        current = self.nxq_fg if which == "fg" else self.nxq_bg
+        _rgb, hexv = colorchooser.askcolor(color=current, title="Choose a color")
+        if not hexv:
+            return
+        if which == "fg":
+            self.nxq_fg = hexv
+            self.nxq_fg_btn.configure(fg_color=hexv)
+        else:
+            self.nxq_bg = hexv
+            self.nxq_bg_btn.configure(fg_color=hexv)
+        self._nxq_schedule()
+
+    def _nxq_pick_logo(self):
+        path = self._ask_open("nexus_logo", title="Choose a center logo image",
+                              filetypes=self._IMAGE_FILETYPES)
+        if path:
+            self.nx_qr_logo = Path(path)
+            self.nxq_logo_label.configure(text=self._ellipsize(self.nx_qr_logo.name, 22))
+            self._nxq_schedule()
+
+    def _nxq_clear_logo(self):
+        self.nx_qr_logo = None
+        self.nxq_logo_label.configure(text="No logo")
+        self._nxq_schedule()
+
+    def _nxq_value(self, w):
+        if isinstance(w, ctk.CTkTextbox):
+            return w.get("1.0", "end").strip()
+        if isinstance(w, ctk.CTkCheckBox):
+            return bool(w.get())
+        return w.get()  # CTkEntry / CTkSegmentedButton / CTkComboBox
+
+    def _nxq_collect(self, kind: str) -> dict:
+        return {k: self._nxq_value(w) for k, w in self.nxq_fields[kind].items()}
+
+    def _nxq_schedule(self, *_):
+        if self._nxq_after is not None:
+            try:
+                self.after_cancel(self._nxq_after)
+            except Exception:  # noqa: BLE001
+                pass
+        self._nxq_after = self.after(180, self._nxq_compute)
+
+    def _nxq_compute(self):
+        self._nxq_after = None
+        kind = self.nxq_type.get()
+        payload = build_qr_payload(kind, self._nxq_collect(kind))
+        if not payload:
+            self.nx_qr_image = None
+            self._nxq_payload = ""
+            self.nxq_preview.configure(image=self._nxq_blank,
+                                       text="Fill in the fields to preview your QR code.")
+            self.nxq_payload_label.configure(text="")
+            self.nxq_btn.configure(state="disabled")
+            self.nxq_copy_btn.configure(state="disabled")
+            return
+        try:
+            img = make_qr(
+                payload, ec=self.nxq_ec.get(),
+                scale=int(round(self.nxq_scale.get())),
+                margin=int(round(self.nxq_margin.get())),
+                fg=self.nxq_fg, bg=self.nxq_bg,
+                logo_path=str(self.nx_qr_logo) if self.nx_qr_logo else None)
+        except Exception as exc:  # noqa: BLE001
+            self.nx_qr_image = None
+            self._nxq_payload = ""
+            self.nxq_preview.configure(image=self._nxq_blank, text=str(exc))
+            self.nxq_btn.configure(state="disabled")
+            self.nxq_copy_btn.configure(state="disabled")
+            return
+        self.nx_qr_image = img
+        self._nxq_payload = payload
+        self._nxq_preview_ctk = ctk.CTkImage(light_image=img, dark_image=img,
+                                             size=(240, 240))
+        self.nxq_preview.configure(image=self._nxq_preview_ctk, text="")
+        self.nxq_payload_label.configure(
+            text=self._ellipsize(payload.replace("\n", " "), 64))
+        self.nxq_btn.configure(state="normal")
+        self.nxq_copy_btn.configure(state="normal")
+
+    def on_nxq_save(self):
+        payload = getattr(self, "_nxq_payload", "")
+        if not payload:
+            return
+        out = self._ask_save(
+            "nexus_qr", title="Save QR code as", defaultextension=".png",
+            initialfile="qr_code.png",
+            filetypes=[("PNG image", "*.png"), ("SVG vector", "*.svg")])
+        if not out:
+            self.nxq_status.configure(text="Cancelled (no save location chosen).",
+                                      text_color=MUTED)
+            return
+        opts = {"ec": self.nxq_ec.get(),
+                "scale": int(round(self.nxq_scale.get())),
+                "margin": int(round(self.nxq_margin.get())),
+                "fg": self.nxq_fg, "bg": self.nxq_bg,
+                "logo_path": str(self.nx_qr_logo) if self.nx_qr_logo else None}
+        self._job_started()
+        self.nxq_btn.configure(state="disabled")
+        self.nxq_btn.start_busy()
+        self.nxq_status.configure(text="Saving the QR code…", text_color=MUTED)
+        threading.Thread(target=self._nxq_save_worker,
+                         args=(payload, Path(out), opts), daemon=True).start()
+
+    def _nxq_save_worker(self, payload: str, out: Path, opts: dict):
+        try:
+            fmt = "svg" if out.suffix.lower() == ".svg" else "png"
+            if fmt == "svg":
+                opts = {k: v for k, v in opts.items() if k != "logo_path"}
+            saved = save_qr(payload, out, fmt=fmt, overwrite=True, **opts)
+            self.after(0, self._nxq_save_done, payload, saved, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._nxq_save_done, payload, None, exc)
+
+    def _nxq_save_done(self, payload: str, out: Path | None, error: Exception | None):
+        self._job_finished()
+        self.nxq_btn.configure(state="normal")
+        self.nxq_btn.stop_busy(success=error is None)
+        kind = self.nxq_type.get()
+        if error:
+            self.nxq_status.configure(text=f"✕  {error}", text_color=ERROR)
+            self.add_history(f"QR Code · {kind}", None, False, error)
+            return
+        self.nxq_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
+        self.add_history(f"QR Code · {kind}", out, True)
+
+    def _nxq_copy_image(self):
+        img = self.nx_qr_image
+        if img is None:
+            return
+        try:
+            import io
+
+            import win32clipboard  # pywin32 (Windows dep)
+
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, "BMP")
+            dib = buf.getvalue()[14:]  # strip the 14-byte BMP file header -> DIB
+            buf.close()
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, dib)
+            win32clipboard.CloseClipboard()
+            self.nxq_status.configure(text="✓  QR image copied to the clipboard.",
+                                      text_color=SUCCESS)
+        except Exception:  # noqa: BLE001 - fall back to copying the encoded text
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(getattr(self, "_nxq_payload", ""))
+                self.nxq_status.configure(
+                    text="Copied the QR text (image copy unavailable here).",
+                    text_color=WARNING)
+            except Exception:  # noqa: BLE001
+                self.nxq_status.configure(text="Couldn't copy the QR code.",
+                                          text_color=ERROR)
+
 
 def _run_cli(args) -> int:
     """Headless mode: --convert, --download, --remove-bg, --upscale, --detect,
@@ -3770,6 +4670,27 @@ def _run_cli(args) -> int:
         "--split-stems", metavar="FILE",
         help="Split an audio file into 4 stems (vocals/drums/bass/other), "
              "save them as WAVs next to it, and exit.",
+    )
+    parser.add_argument(
+        "--qr", nargs="+", metavar="TEXT [OUTFILE]",
+        help="Write a QR code PNG for TEXT (to OUTFILE, or qr_code.png in the "
+             "current folder) and exit.",
+    )
+    parser.add_argument(
+        # NB: the file converter already owns --convert FILE FORMAT, so the
+        # Nexus unit converter gets its own flag rather than overloading it.
+        "--convert-units", metavar="EXPR",
+        help="Convert units, e.g. --convert-units \"100 km to mi\", and exit.",
+    )
+    parser.add_argument(
+        "--convert-currency", nargs=3, metavar=("AMOUNT", "FROM", "TO"),
+        help="Convert currency (cached/seed rates), e.g. "
+             "--convert-currency 100 USD EUR, and exit.",
+    )
+    parser.add_argument(
+        "--convert-tz", nargs=3, metavar=("DATETIME", "FROM", "TO"),
+        help="Convert a date/time between zones, e.g. "
+             "--convert-tz \"2026-06-13 14:30\" Asia/Dubai America/New_York.",
     )
     ns = parser.parse_args(args)
     if ns.convert:
@@ -3859,6 +4780,56 @@ def _run_cli(args) -> int:
                 out = save_stem(arr, r["samplerate"],
                                 src.with_name(f"{src.stem}_{stem}.wav"))
                 print(f"Saved: {out}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.qr:
+        if len(ns.qr) > 2:
+            parser.error("--qr takes TEXT and an optional OUTFILE")
+        text = ns.qr[0]
+        out = ns.qr[1] if len(ns.qr) > 1 else os.path.join(os.getcwd(), "qr_code.png")
+        try:
+            fmt = "svg" if str(out).lower().endswith(".svg") else "png"
+            saved = save_qr(text, out, fmt=fmt)
+            print(f"Saved: {saved}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.convert_units:
+        try:
+            expr = ns.convert_units.strip()
+            if " to " not in expr:
+                parser.error('--convert-units needs the form "<value> <from> to <to>"')
+            left, dst = expr.rsplit(" to ", 1)
+            parts = left.split(None, 1)
+            if len(parts) != 2:
+                parser.error('--convert-units needs the form "<value> <from> to <to>"')
+            value = float(parts[0])
+            result = convert_units(value, parts[1].strip(), dst.strip())
+            print(f"{value} {parts[1].strip()} = {result} {dst.strip()}")
+            return 0
+        except SystemExit:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.convert_currency:
+        amount, src, dst = ns.convert_currency
+        try:
+            rates = load_rates()["rates"]
+            result = convert_currency(float(amount), src, dst, rates)
+            print(f"{amount} {src.upper()} = {result:.4f} {dst.upper()}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.convert_tz:
+        dt_text, src, dst = ns.convert_tz
+        try:
+            out = convert_timezone(parse_datetime(dt_text), src, dst)
+            print(f"{dst}: {out:%Y-%m-%d %H:%M} ({tz_offset_str(out)})")
             return 0
         except Exception as exc:  # noqa: BLE001
             print(f"Error: {exc}", file=sys.stderr)

@@ -27,6 +27,12 @@ mixer (`sounddevice`) — details inline below.
 **v4.1** gave both Marquee tools the same GPU treatment: the upscaler moved to
 **UltraSharp V2 via spandrel** and the bg remover's Omega tier to
 **BiRefNet_HR** — details inline below.
+**v4.2** opens a fourth direction — a utilities area called **Nexus** (same
+multi-tool switcher as Marquee/Vanguard): a **Converter** (currency · units ·
+time zones — all offline, no account, no limits) and a **QR Code** generator.
+Pure logic lives in `bud3eij/nexus.py`; new deps are **`pint`** (units),
+**`tzdata`** (time zones) and **`qrcode[pil]`** (QR) — no ML, nothing in
+`~/.bud3eij/models/` — details inline below.
 
 ## Environment (important)
 - **Runtime is the Python 3.11 venv at `.venv`** — always use it:
@@ -75,6 +81,12 @@ mixer (`sounddevice`) — details inline below.
 # Headless stem splitting -> 4 WAVs next to the source (also works on the exe)
 .\.venv\Scripts\python app.py --split-stems "C:\path\song.mp3"
 
+# Headless Nexus utilities (also work on the exe)
+.\.venv\Scripts\python app.py --qr "https://example.com" out.png   # PNG or .svg
+.\.venv\Scripts\python app.py --convert-units "100 km to mi"
+.\.venv\Scripts\python app.py --convert-currency 100 USD EUR
+.\.venv\Scripts\python app.py --convert-tz "2026-06-13 14:30" Asia/Dubai America/New_York
+
 # Install / update deps
 .\.venv\Scripts\python -m pip install -r requirements.txt
 
@@ -83,6 +95,7 @@ mixer (`sounddevice`) — details inline below.
   --icon "AppLogo.ico" `
   --add-data "AppLogo.ico;." --add-data "DashboardLogo.png;." `
   --add-data "bud3eij_theme.json;." --add-data "assets;assets" `
+  --add-data "assets/data/rates_seed.json;assets/data" `
   --collect-all customtkinter --collect-all tkinterdnd2 `
   --collect-all pptx --collect-all mammoth --collect-all markdownify --collect-all bs4 `
   --collect-data pdfminer --collect-data pdfplumber `
@@ -95,9 +108,20 @@ mixer (`sounddevice`) — details inline below.
   --collect-all sounddevice --copy-metadata torch `
   --collect-all spandrel --collect-all transformers --collect-all timm `
   --collect-all kornia --collect-all torchvision `
+  --collect-all pint --collect-all tzdata --collect-all qrcode `
   --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
+
+> **v4.2 Nexus (utilities) build note — already applied above:**
+> `--collect-all pint` (its unit-definition data file isn't picked up by static
+> analysis), `--collect-all tzdata` (the IANA zone database — Windows has none),
+> and `--collect-all qrcode`. The ECB seed snapshot is bundled with
+> `--add-data "assets/data/rates_seed.json;assets/data"` (belt-and-suspenders —
+> `--add-data "assets;assets"` already sweeps it in, but the explicit flag
+> documents the dependency). **No ML models** — nothing downloads into
+> `~/.bud3eij/models/`; the only writable cache is `~/.bud3eij/nexus/rates.json`
+> (the in-app **Refresh**), and the app converts offline from the seed without it.
 
 > **v4.1 Marquee GPU models build note — already applied above:**
 > `--collect-all spandrel/transformers/timm/kornia/torchvision` cover the new
@@ -160,11 +184,15 @@ mixer (`sounddevice`) — details inline below.
   python: `tests\test_headless.py` (format model, conversions incl. animated
   GIF, ffmpeg error truncation, upscaler fits/overwrite/SR-threshold,
   bg-remover overwrite, vanguard scoring, OCR text extraction, font ID,
-  sonara stem split + StemPlayer mix math,
+  sonara stem split + StemPlayer mix math, **v4.2 nexus** (units incl.
+  temperature, currency math + inverse against a stubbed rate table, tz offset +
+  day rollover, Wi-Fi/vCard payloads, `make_qr`→PNG that decodes back via cv2,
+  SVG recolour),
   history validation — loads the Vanguard + Demucs models, so the first run is
   slow), `tests\test_gui_smoke.py` (all
   frames + the v3.1 widgets/counters + the v3.2 Vanguard switcher/panels + the
-  v4.0 Sonara page/stub-player toggles),
+  v4.0 Sonara page/stub-player toggles + the **v4.2 Nexus** switcher/category
+  swaps + live conversion + QR type swap),
   `tests\test_com_paths.py` (direct-Word
   DOCX→PDF incl. the no-WINWORD-leak check, owned-PowerPoint PPTX→PDF; needs
   Office installed).
@@ -184,7 +212,8 @@ mixer (`sounddevice`) — details inline below.
 `bud3eij/` package — `formats.py` (format model, helpers, `ConversionError`),
 `converters.py` (`convert_file` + every document/image/AV converter),
 `youtube.py` (`download_youtube`), `background.py` (`remove_background` +
-`BG_MODELS`). `app.py` holds the GUI (`App`, `GradientButton`, palette/icons),
+`BG_MODELS`), and (v4.2) `nexus.py` (the Nexus utilities — currency/units/tz
+converters + QR builders). `app.py` holds the GUI (`App`, `GradientButton`, palette/icons),
 the Recent-history store (`load_history`/`save_history`), the CLI (`_run_cli`),
 and `main()`, and it re-exports the package functions (so `app.convert_file`,
 `app.remove_background`, etc. still resolve). Converters still **import heavy deps
@@ -467,6 +496,79 @@ still apply; only the file a function lives in changed.
   at the default 1000×680 window) → eased-fill progress → results card with 5
   pre-built rows (rank, name, confidence bar + %), disclaimer. Panel icon
   `assets/ui/type.png`. CLI: `--identify-font FILE` (prints top-5).
+- **Nexus = the utilities page (v4.2); two tools: Converter + QR Code.** Same
+  multi-tool switcher as Marquee/Vanguard: `_build_nexus` = `_section_header` +
+  a `CTkSegmentedButton` (`self.nx_tool`: "Converter" / "QR Code") + a container
+  of panels in `self.nx_panels`, swapped by `_show_nx_tool`. Pure logic in
+  **`bud3eij/nexus.py`** (lazy imports), re-exported from `app.py`; **no ML**,
+  nothing in `~/.bud3eij/models/`, nothing for the Tools "Unload AI models"
+  button. Registered as a **lazy frame builder** (don't build eagerly). Nav icon
+  `assets/ui/compass.png`.
+  - **Nexus → Converter (`_build_nx_convert`, attrs `nxc_*`):** a top category
+    `CTkSegmentedButton` (`self.nxc_cat`: Currency / Units / Time Zone) swaps the
+    input sub-frame (`self.nxc_frames`, grid/grid_remove via `_show_nxc_cat`);
+    a shared result card shows a big result + detail line + **Copy result**
+    (`_nxc_copy` → pure Tk clipboard) + **⇄ Swap** (`_nxc_swap`). **Live** —
+    every input recomputes on a **150 ms debounce** (`_nxc_schedule` → `after` →
+    `_nxc_compute`, which dispatches to `_nxc_compute_currency/_units/_tz`). No
+    file output ⇒ **no `add_history`, no progress bar, no GradientButton**. The
+    `_show_*`/`_nxc_unit_cat_change` handlers `.set()` their segmented/option
+    value so they're correct when called programmatically (tests), not only on
+    click. Use `_bind_typing(widget, handler)` to fire on every keystroke (binds
+    the entry, reaching `widget._entry` for comboboxes).
+    - **Currency:** `load_rates()` → `convert_currency(amount, src, dst, rates)`
+      (base-EUR cross-rate; EUR is implied 1.0). Rates load **offline-first:
+      cache (`~/.bud3eij/nexus/rates.json`) → bundled seed
+      (`assets/data/rates_seed.json`)** — a fresh machine still converts. The
+      ECB/Frankfurter feed omits the **USD-pegged Gulf currencies**, so
+      `USD_PEGGED` (BHD/AED/SAR/QAR/OMR, fixed units-per-USD) is added by
+      `_augment_pegged` at load (derived from the USD rate, so the pegs stay
+      consistent across a refresh; the cache stores only the pure ECB set).
+      Dropdowns show **full-name labels** (`currency_label` → `USD (US Dollar)`;
+      `_code_from_label` extracts the code back) and are **typeahead-filtered**
+      via `_attach_search` (the combobox values narrow as you type).
+      **Refresh** (`_nxc_refresh_rates`, worker thread) calls `refresh_rates()`
+      → fetches ECB rates from the open **Frankfurter** endpoint
+      (`api.frankfurter.dev/v1/latest`, stdlib `urllib`, **needs a User-Agent**
+      — a bare request 403s; `.dev/latest` 404s, the `/v1/` path is required),
+      caches them, and recomputes; a failure is a **WARNING, not an error**
+      (keeps the cached set). "Rates as of <date> · live/cached/bundled snapshot".
+    - **Units:** `convert_units(value, src_unit, dst_unit)` via **`pint`** (one
+      shared lazy `UnitRegistry`). `UNIT_CATEGORIES` (11 categories → `[(label,
+      pint_unit)]`) drives a category `CTkOptionMenu` + From/To menus; pint
+      handles **temperature offsets** correctly (the reason we don't roll our own
+      factor table). Mismatched dimensions raise `ConversionError`.
+    - **Time Zone:** `convert_timezone(dt, src_tz, dst_tz)` (stdlib `zoneinfo` +
+      the bundled **`tzdata`**); `parse_datetime` accepts ISO / `YYYY-MM-DD HH:MM`
+      / bare date / bare time / "now"; `tz_offset_str` shows `UTC±HH:MM`; a
+      **day-rollover note** (next/previous day) and a pinned **world clock**
+      (`WORLD_CLOCK_ZONES`). The From/To comboboxes show a short curated list
+      (`COMMON_TIMEZONES`, ~32) by default — the full IANA set (`list_timezones()`,
+      ~600) is a scroll-arrow mess — and `_attach_search` **filters the full set
+      as you type** (prefix matches first), falling back to the curated list when
+      cleared. `_attach_search(combo, get_values, on_change, get_default=None)` is
+      the shared typeahead helper (binds the combobox's `_entry` KeyRelease).
+  - **Nexus → QR Code (`_build_nx_qr`, attrs `nxq_*`):** a content-type
+    `CTkSegmentedButton` (`self.nxq_type`, `QR_TYPES`: Text/URL · Wi-Fi · Email ·
+    Phone · SMS · vCard · Geo) swaps the field group (`self.nxq_groups`, built by
+    `_build_nxq_group` from `QR_FIELD_SPECS`; widgets stored in
+    `self.nxq_fields[kind]`). `build_qr_payload(kind, fields)` makes the encoded
+    string (e.g. `WIFI:T:WPA;S:..;P:..;;` with `;,:"\\` escaped; vCard 3.0;
+    `mailto:`/`tel:`/`SMSTO:`/`geo:`) — **returns "" when essentials are blank**
+    so the empty state shows a placeholder, not a meaningless QR. Options:
+    EC L/M/Q/H, module size + quiet-zone margin sliders, FG/BG via
+    `tkinter.colorchooser`, optional **centre logo** (`make_qr` auto-bumps EC to
+    H and pastes it on a white backing). **Live preview** (180 ms debounce,
+    `_nxq_compute` → `make_qr` → `CTkImage`). **Save** = a `GradientButton` (icon
+    `qr-code`, busy "Generating") → `_ask_save("nexus_qr")` → worker `save_qr`
+    (PNG or **SVG**, `overwrite=True`) → `add_history(f"QR Code · {kind}", out,
+    True)`. **Copy image** → clipboard `CF_DIB` via pywin32 (falls back to
+    copying the payload text). Encoder = `qrcode[pil]`.
+    **Gotcha (cost real time):** `CTkLabel.configure(image=None)` after an image
+    has been shown is a CustomTkinter bug ("image doesn't exist" on the *next*
+    set) and `image=""` warns — the empty/error state swaps in a reusable 1×1
+    transparent `CTkImage` (`self._nxq_blank`) instead. **Never pass `image=None`
+    to a CTkLabel that has shown an image.**
   Marquee, Vanguard, Tools) raising stacked frames — all functional. The sidebar foot has a **sun/moon
   appearance toggle** (`_toggle_appearance`, `SUN_GLYPH`/`MOON_GLYPH` in
   "Segoe UI Symbol"), replacing the old Light/Dark/System dropdown. Each
@@ -603,9 +705,14 @@ still apply; only the file a function lives in changed.
   (transparent PNG next to the source; TIER = Flash/Mid/Omega, default Mid),
   `--upscale FILE [TARGET]` (1080p/2K/4K, default 2K), `--detect FILE`,
   `--extract-text FILE [TIER]` (Fast/Max, prints the OCR'd text),
-  `--identify-font FILE` (prints the top-5 font matches), and
-  `--split-stems FILE` (saves the 4 stem WAVs next to the source) run
+  `--identify-font FILE` (prints the top-5 font matches),
+  `--split-stems FILE` (saves the 4 stem WAVs next to the source), and the v4.2
+  Nexus flags — `--qr "TEXT" [OUTFILE]` (PNG, or `.svg` by extension),
+  `--convert-units "100 km to mi"`, `--convert-currency AMT SRC DST`,
+  `--convert-tz "<datetime>" SRC DST` — run
   headless; extra positional args are rejected with a clear `parser.error`.
+  (**Note:** the file converter already owns `--convert FILE FORMAT`, so the unit
+  converter is `--convert-units`, not an overload of `--convert`.)
   No flags → GUI; a **bare file argument** (e.g. a file dragged onto the exe)
   opens the GUI with the Converter preloaded. All of these double as the way to
   smoke-test the frozen exe.
@@ -699,6 +806,7 @@ bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
   fontid.py       identify_font + FONTID_FILES (Vanguard What's The Font)
   sonara.py       split_stems + save_stem + STEMS (Sonara stem splitter, Demucs)
   stemplayer.py   StemPlayer (real-time 4-stem mixer on sounddevice)
+  nexus.py        currency/units/timezone converters + QR builders (Nexus, v4.2)
 requirements.txt  runtime deps (pyinstaller is dev-only, installed separately)
 README.md         user-facing docs
 CLAUDE.md         this file
@@ -710,6 +818,7 @@ bud3eij_theme.json logo-derived red CustomTkinter theme (must be bundled)
 assets\filetypes\ colored file-type icons (vscode-icons, MIT) — must be bundled
 assets\ui\        monochrome nav/UI icons (lucide, ISC), tinted at runtime
 assets\fonts\     bundled Inter TTFs (Regular/Medium/SemiBold/Bold, OFL) — the UI font
+assets\data\      rates_seed.json — bundled ECB currency snapshot (Nexus offline seed)
 assets\LICENSES.md icon attributions; regenerate via tools\fetch_icons.py (dev)
 tools\fetch_icons.py  dev-only icon generator (Iconify -> PNG; not bundled)
 tests\            verification scripts (v3.1): test_headless.py,

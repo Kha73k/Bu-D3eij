@@ -22,6 +22,9 @@ spandrel>=0.4
 transformers>=5.0
 timm>=1.0
 kornia>=0.8
+pint>=0.23          ; Nexus unit converter
+tzdata>=2024.1      ; Nexus time-zone converter (no system tz db on Windows)
+qrcode[pil]>=7.4    ; Nexus QR-code generator (stdlib urllib handles rate fetch)
 # torch/torchaudio are installed separately with the CUDA index (see CLAUDE.md):
 #   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
 # A plain `pip install -r requirements.txt` resolves demucs against the CPU

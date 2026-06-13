@@ -287,6 +287,81 @@ check("mix clips to [-1,1]", float(np.abs(loud._mix_block(0, 32)).max()) <= 1.0)
 tail = sp._mix_block(990, 64)
 check("end-of-audio zero pad", tail.shape == (64, 2) and np.allclose(tail[10:], 0.0))
 
+# ---- 7f. nexus: converter (units / currency / timezone) + QR -----------------
+print("\n[7f] nexus utilities")
+from bud3eij import nexus  # noqa: E402
+
+# units incl. temperature offsets
+check("units 100C->212F", abs(nexus.convert_units(100, "degC", "degF") - 212.0) < 1e-6)
+check("units 0C->273.15K", abs(nexus.convert_units(0, "degC", "kelvin") - 273.15) < 1e-9)
+check("units 1mi->1.609344km",
+      abs(nexus.convert_units(1, "mile", "kilometer") - 1.609344) < 1e-6)
+check("units 1GiB->1024MiB", nexus.convert_units(1, "gibibyte", "mebibyte") == 1024)
+try:
+    nexus.convert_units(1, "meter", "gram")
+    check("units rejects mismatched dimensions", False)
+except ConversionError:
+    check("units rejects mismatched dimensions", True)
+
+# currency math against a stubbed base-EUR table (+ inverse round-trip)
+stub = {"EUR": 1.0, "USD": 1.25, "GBP": 0.8}
+check("currency 100 USD->EUR", abs(nexus.convert_currency(100, "USD", "EUR", stub) - 80.0) < 1e-9)
+check("currency 100 USD->GBP", abs(nexus.convert_currency(100, "USD", "GBP", stub) - 64.0) < 1e-9)
+rt = nexus.convert_currency(nexus.convert_currency(100, "USD", "GBP", stub), "GBP", "USD", stub)
+check("currency inverse round-trips", abs(rt - 100.0) < 1e-9)
+try:
+    nexus.convert_currency(1, "USD", "XYZ", stub)
+    check("currency rejects unknown code", False)
+except ConversionError:
+    check("currency rejects unknown code", True)
+# rates load offline from the bundled seed snapshot
+rates = nexus.load_rates()
+check("rates load offline (seed/cache)",
+      rates["rates"].get("EUR") == 1.0 and len(rates["rates"]) > 10, rates.get("source"))
+# USD-pegged Gulf currencies the ECB feed omits are added + correctly derived
+check("BHD available (USD-pegged)", "BHD" in rates["rates"])
+check("100 USD -> BHD ~ 37.6 (peg)",
+      abs(nexus.convert_currency(100, "USD", "BHD", rates["rates"]) - 37.6) < 0.01)
+check("100 BHD -> USD ~ 265.96 (peg)",
+      abs(nexus.convert_currency(100, "BHD", "USD", rates["rates"]) - 265.957) < 0.01)
+check("currency_label shows full name",
+      nexus.currency_label("BHD") == "BHD (Bahraini Dinar)", nexus.currency_label("BHD"))
+
+# timezone: known offset + a day rollover
+out = nexus.convert_timezone(nexus.parse_datetime("2024-01-01 12:00"),
+                             "America/New_York", "Asia/Tokyo")
+check("tz NY noon -> Tokyo next day 02:00",
+      out.strftime("%Y-%m-%d %H:%M") == "2024-01-02 02:00", out.strftime("%Y-%m-%d %H:%M"))
+check("tz offset string", nexus.tz_offset_str(out) == "UTC+09:00", nexus.tz_offset_str(out))
+roll = nexus.convert_timezone(nexus.parse_datetime("2024-01-01 23:30"),
+                              "America/Los_Angeles", "Europe/London")
+check("tz day rollover", roll.day == 2, str(roll))
+
+# QR payloads (Wi-Fi escaping, vCard) + empty-input guard
+wifi = nexus.build_qr_payload("Wi-Fi",
+                              {"ssid": "Net;1", "password": "p:w", "encryption": "WPA/WPA2"})
+check("wifi payload escaped", wifi == r"WIFI:T:WPA;S:Net\;1;P:p\:w;;", repr(wifi))
+vc = nexus.build_qr_payload("vCard", {"first": "Ada", "last": "Lovelace", "email": "a@b.c"})
+check("vcard payload",
+      "BEGIN:VCARD" in vc and "FN:Ada Lovelace" in vc and "EMAIL:a@b.c" in vc, vc)
+check("empty payload is blank", nexus.build_qr_payload("Geo", {"lat": "", "lon": ""}) == "")
+
+# make_qr writes a PNG that decodes back to the payload
+qr_png = tmp / "qr.png"
+nexus.save_qr("https://bud3eij.test/Z9", qr_png, fmt="png", overwrite=True)
+check("qr png written", qr_png.exists())
+try:
+    import cv2  # test-only decode (the app already ships opencv)
+
+    decoded, _, _ = cv2.QRCodeDetector().detectAndDecode(cv2.imread(str(qr_png)))
+    check("qr decodes back to payload", decoded == "https://bud3eij.test/Z9", repr(decoded))
+except ImportError:
+    check("qr decode skipped (cv2 unavailable)", True)
+# svg export keeps the chosen colors
+svg_text = nexus.save_qr("hi", tmp / "qr.svg", fmt="svg", fg="#123456", bg="#ABCDEF",
+                         overwrite=True).read_text(encoding="utf-8")
+check("qr svg recolored", "#123456" in svg_text and "#ABCDEF" in svg_text)
+
 # ---- 8. unload functions -----------------------------------------------------
 print("\n[8] unload functions")
 from bud3eij import background, fontid, ocr, sonara, upscale, vanguard  # noqa: E402

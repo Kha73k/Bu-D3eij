@@ -2,14 +2,16 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-13 (UI responsiveness pass)_
+_Last updated: 2026-06-13 (Nexus utilities section)_
 
-## Status: working app — v4.1 (Marquee GPU upgrade; exe rebuild pending)
+## Status: working app — v4.2 (Nexus utilities; exe rebuild pending)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
-Upscaler**), and a **Vanguard** AI-text section (**AI Text Detector + Text
-Extraction + What's The Font**) are complete and verified. v1.1 = PowerPoint +
+Upscaler**), a **Vanguard** AI-text section (**AI Text Detector + Text
+Extraction + What's The Font**), a **Sonara** audio section (stem splitter +
+mixer), and a **Nexus** utilities section (**Converter** — currency/units/time
+zones — **+ QR Code**) are complete and verified. v1.1 = PowerPoint +
 Markdown; v1.2 = bug
 fixes; v1.3 = YouTube downloads + sun/moon toggle; v1.4 = visual redesign (file-type
 icons, hero Home, table Recent); v1.4.5 = animated "Convert Now" button; v2.0 =
@@ -19,12 +21,77 @@ v2.2 = split the logic into a `bud3eij/` package; v2.3 = Marquee Image Upscaler
 Detector (desklib DeBERTa-v3-large on onnxruntime)**; v3.1 = audit-fix pass;
 v3.1.5 = dopamine CTA redesign; v3.2 = Vanguard becomes multi-tool (OCR +
 font identification); **v4.0 = Sonara audio section — Demucs stem splitter +
-real-time 4-stem mixer (first PyTorch/CUDA dependency)**.
+real-time 4-stem mixer (first PyTorch/CUDA dependency)**; v4.1 = Marquee GPU
+upgrade (UltraSharp V2 + BiRefNet-HR); **v4.2 = Nexus utilities section
+(offline currency/units/time-zone converter + QR-code generator)**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-13 — Nexus polish (currency names/pegs + searchable zones)
+Follow-up to the v4.2 Nexus section after a first exe build + review:
+- **Currency dropdowns now show full names** (`currency_label` → `USD (US Dollar)`;
+  `_code_from_label` still extracts the code) and are **typeahead-filtered** —
+  3-letter codes alone were unreadable.
+- **Bahraini Dinar + the other USD-pegged Gulf currencies** (BHD/AED/SAR/QAR/OMR)
+  added via `USD_PEGGED` + `_augment_pegged` (derived from the USD rate at load,
+  so they survive a live refresh; the ECB/Frankfurter feed doesn't publish them).
+  100 USD → 37.60 BHD (peg 1 BHD = 2.65957 USD), verified.
+- **Time-zone pickers are now searchable** — the full IANA set (~600) was an
+  unscrollable native-menu mess. Default to a short curated list
+  (`COMMON_TIMEZONES`, ~32); `_attach_search` filters the full set as you type
+  (prefix-first) and restores the curated list when cleared. Shared helper
+  `_attach_search(combo, get_values, on_change, get_default)` binds the
+  combobox's `_entry` KeyRelease (real keystrokes fire it; synthetic test events
+  need `focus_force` first). Tests added to both suites (81 GUI / 83 headless).
+
+### 2026-06-13 — Nexus utilities section (v4.2)
+New sidebar section **Nexus** — everyday utilities that are free online but
+walled behind ads/sign-ins/limits, done 100% locally. Same multi-tool switcher
+pattern as Marquee/Vanguard (`_build_nexus` + `self.nx_tool` segmented +
+`self.nx_panels` swapped by `_show_nx_tool`). Pure logic in **`bud3eij/nexus.py`**
+(lazy imports), re-exported from `app.py`; registered as a **lazy frame builder**
+(per the same-day perf change) and added to `NAV_ITEMS`/`NAV_ICONS` (lucide
+`compass`). Two tools:
+- **Converter** (`_build_nx_convert`, `nxc_*`) — a category segmented
+  (Currency / Units / Time Zone) swaps the input rows; conversions are **live**
+  (debounced ~150 ms) with **Copy result** + **⇄ Swap** (no GradientButton, no
+  history). *Currency*: ECB daily rates via the open **Frankfurter** endpoint
+  (`api.frankfurter.dev/v1/latest`, stdlib `urllib`, needs a User-Agent), cached
+  to `~/.bud3eij/nexus/rates.json` and **seeded** by a bundled snapshot
+  (`assets/data/rates_seed.json`) so a fresh offline machine still converts;
+  "Rates as of <date>" + **Refresh** (worker thread, WARNING-not-error if
+  offline). *Units*: **`pint`** across 11 categories (temperatures with correct
+  offsets). *Time Zone*: stdlib **`zoneinfo`** + the **`tzdata`** package, with a
+  pinned world-clock list and a day-rollover note.
+- **QR Code** (`_build_nx_qr`, `nxq_*`) — a content-type segmented
+  (Text/URL · Wi-Fi · Email · Phone · SMS · vCard · Geo) swaps the fields;
+  options (EC L/M/Q/H, module size, quiet-zone margin, FG/BG colour pickers,
+  optional **centre logo** → auto-bumps EC to H); **live preview** (debounced);
+  **Save** = a `GradientButton` (icon `qr-code`, "Generating") → PNG or **SVG**
+  (worker thread + `add_history`); **Copy image** to the clipboard via pywin32
+  `CF_DIB` (falls back to copying the payload text). Encoder = `qrcode[pil]`.
+- **CLI**: `--qr "TEXT" [OUTFILE]`, `--convert-units "100 km to mi"`,
+  `--convert-currency AMT SRC DST`, `--convert-tz "<datetime>" SRC DST`. NB the
+  file converter already owns `--convert FILE FORMAT`, so the unit converter got
+  its **own** flag (`--convert-units`) rather than overloading `--convert`.
+- **Gotcha fixed:** `CTkLabel.configure(image=None)` after an image has been
+  shown is a CustomTkinter bug ("image doesn't exist" on the *next* set), and
+  `image=""` warns — the QR preview's empty state swaps in a reusable 1×1
+  transparent `CTkImage` (`self._nxq_blank`) instead. Also: the `_show_*`/
+  `_nxc_unit_cat_change` handlers now `.set()` their segmented/option value so
+  they're correct when called programmatically (tests), not only on click.
+- **Deps**: `pint`, `tzdata`, `qrcode[pil]` added to `requirements.txt`; build
+  command gains `--collect-all pint tzdata qrcode` + the seed `--add-data`. No
+  ML models, nothing in `~/.bud3eij/models/`, nothing for the Unload button.
+- **Verified**: `tests/test_headless.py` (units incl. temperature, currency math
+  + inverse, tz offset + day rollover, Wi-Fi/vCard payloads, `make_qr` → PNG that
+  decodes back via cv2, SVG recolour) and `tests/test_gui_smoke.py` (Nexus nav,
+  switcher, category/type swaps, live conversion, QR `GradientButton`) both green
+  (79 / 77). New icons `assets/ui/compass.png` + `qr-code.png` via
+  `tools/fetch_icons.py`.
 
 ### 2026-06-13 — UI responsiveness pass (tab switch / drag / theme toggle)
 User reported three things: tabs slow to open, window dragging sluggish, and a

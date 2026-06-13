@@ -37,7 +37,8 @@ FILETYPES = {
 UI = ["house", "repeat", "clock", "layers", "youtube", "wrench",
       "folder-open", "arrow-right", "arrow-left-right", "sparkles", "download",
       "shield-check", "scan-text", "type",
-      "audio-lines", "mic", "drum", "guitar", "music"]
+      "audio-lines", "mic", "drum", "guitar", "music",
+      "compass", "qr-code"]
 
 
 def get_svg(url: str) -> bytes:

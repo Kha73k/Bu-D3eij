@@ -31,7 +31,7 @@ a.update()
 for name in app.NAV_ITEMS:
     a.show_frame(name)
     a.update()
-check("all 9 frames switch", True)
+check("all 10 frames switch", True)
 check("_current_frame tracks", a._current_frame == app.NAV_ITEMS[-1], a._current_frame)
 
 # new widgets exist
@@ -147,7 +147,96 @@ a.set_sonara_file(f)  # the txt from the converter check
 check("sonara rejects non-audio",
       "Unsupported" in a.sn_status.cget("text"), a.sn_status.cget("text"))
 
-# v3.1.5/v3.2/v4.0: all eight action buttons share the animated GradientButton design
+# v4.2: Nexus — Converter (currency / units / timezone) + QR Code
+a.show_frame("Nexus")
+a.update()
+check("nexus nav present", "Nexus" in app.NAV_ITEMS)
+check("nx_tool has both tools", set(a.nx_panels) == {"Converter", "QR Code"},
+      str(set(a.nx_panels)))
+# converter category swap shows the right inputs
+a.nx_tool.set("Converter")
+a._show_nx_tool("Converter")
+a._show_nxc_cat("Currency")
+a.update()
+check("currency inputs shown", a.nxc_frames["Currency"].winfo_manager() == "grid")
+check("units inputs hidden", a.nxc_frames["Units"].winfo_manager() == "")
+# live currency conversion produces a result
+a.nxc_amount.delete(0, "end")
+a.nxc_amount.insert(0, "100")
+a.nxc_from.set("USD")
+a.nxc_to.set("EUR")
+a._nxc_compute()
+a.update()
+check("live currency result", a.nxc_result.cget("text") not in ("", "—"),
+      a.nxc_result.cget("text"))
+# units category + live temperature conversion (100 C -> 212 F)
+a._show_nxc_cat("Units")
+a._nxc_unit_cat_change("Temperature")
+a.nxc_unit_from.set("Celsius")
+a.nxc_unit_to.set("Fahrenheit")
+a.nxc_value.delete(0, "end")
+a.nxc_value.insert(0, "100")
+a._nxc_compute()
+a.update()
+check("live units result 212", a.nxc_result.cget("text").startswith("212"),
+      a.nxc_result.cget("text"))
+a._nxc_swap()
+a.update()
+check("converter swap works", a.nxc_unit_from.get() == "Fahrenheit",
+      a.nxc_unit_from.get())
+# currency dropdown shows full-name labels incl. the pegged BHD
+a._show_nxc_cat("Currency")
+a.update()
+check("currency labels show full names",
+      any("Bahraini" in v for v in a.nxc_from.cget("values")),
+      str(a.nxc_from.cget("values")[:3]))
+# typeahead filtering narrows the dropdown (focus the entry, then KeyRelease)
+ce = a.nxc_from._entry
+ce.delete(0, "end")
+ce.insert(0, "dinar")
+ce.focus_force()
+a.update()
+ce.event_generate("<KeyRelease>", when="now")
+a.update()
+check("currency search filters", a.nxc_from.cget("values") == ["BHD (Bahraini Dinar)"],
+      str(a.nxc_from.cget("values")))
+# timezone tab + world clock + searchable zones
+a._show_nxc_cat("Time Zone")
+a.update()
+check("timezone inputs shown", a.nxc_frames["Time Zone"].winfo_manager() == "grid")
+check("world clock rows", len(a.nxc_world_rows) == len(app.WORLD_CLOCK_ZONES))
+check("timezone default list is curated (not all ~600)",
+      len(a.nxc_tz_from.cget("values")) == len(a._nxc_tz_common) < 60,
+      str(len(a.nxc_tz_from.cget("values"))))
+te = a.nxc_tz_from._entry
+te.delete(0, "end")
+te.insert(0, "dubai")
+te.focus_force()
+a.update()
+te.event_generate("<KeyRelease>", when="now")
+a.update()
+check("timezone search filters to match", a.nxc_tz_from.cget("values") == ["Asia/Dubai"],
+      str(a.nxc_tz_from.cget("values")))
+# QR tool: 7 content types, GradientButton, live render
+a.nx_tool.set("QR Code")
+a._show_nx_tool("QR Code")
+check("qr has 7 content types", len(a.nxq_groups) == 7, str(len(a.nxq_groups)))
+check("qr save is a GradientButton", isinstance(a.nxq_btn, app.GradientButton))
+a._show_nxq_type("Text / URL")
+a.update()
+check("qr text group shown", a.nxq_groups["Text / URL"].winfo_manager() == "grid")
+check("qr wifi group hidden", a.nxq_groups["Wi-Fi"].winfo_manager() == "")
+check("qr save disabled when empty", not a.nxq_btn._enabled)
+a.nxq_fields["Text / URL"]["text"].insert("1.0", "https://example.com")
+a._nxq_compute()
+a.update()
+check("qr live render + save enabled",
+      a.nx_qr_image is not None and a.nxq_btn._enabled)
+a._show_nxq_type("Wi-Fi")  # type swap (image -> placeholder, no CTkImage crash)
+a.update()
+check("qr wifi group now shown", a.nxq_groups["Wi-Fi"].winfo_manager() == "grid")
+
+# v3.1.5/v3.2/v4.0/v4.2: all nine action buttons share the animated GradientButton design
 for name, btn, busy in [("convert", a.convert_btn, "Converting"),
                         ("youtube", a.yt_btn, "Downloading"),
                         ("bg-remover", a.mq_btn, "Removing"),
@@ -155,7 +244,8 @@ for name, btn, busy in [("convert", a.convert_btn, "Converting"),
                         ("vanguard", a.vg_btn, "Detecting"),
                         ("vg-ocr", a.vgo_btn, "Extracting"),
                         ("vg-font", a.vgf_btn, "Identifying"),
-                        ("sonara", a.sn_btn, "Splitting")]:
+                        ("sonara", a.sn_btn, "Splitting"),
+                        ("nexus-qr", a.nxq_btn, "Generating")]:
     check(f"{name} button is a GradientButton",
           isinstance(btn, app.GradientButton))
     check(f"{name} busy text", getattr(btn, "_busy_text", "") == busy,

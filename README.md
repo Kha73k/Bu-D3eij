@@ -25,6 +25,13 @@ saved right next to the original.
   **Vocals / Drums / Bass / Other** (Demucs `htdemucs_ft`, GPU-accelerated),
   then mix them live in the built-in player (play/pause, seek, per-stem
   mute/solo/volume) and save just the stems you want (WAV or MP3)
+- **Nexus** tab (everyday utilities, 100% local — no account, no limits):
+  **Converter** (live **currency** conversion on ECB rates that work offline and
+  refresh on demand — with full-name, type-to-search dropdowns and the USD-pegged
+  Gulf currencies BHD/AED/SAR/QAR/OMR included — **units** across 11 categories,
+  and **time zones** with a type-to-search picker and a world clock) and a
+  **QR Code** generator (Text/URL, Wi-Fi, Email, Phone, SMS, vCard, Geo — with
+  colours, error-correction, a centre logo, and PNG/SVG export)
 - **Recent** tab: persistent history of your conversions with one-click *Open* / *Folder*
 - Progress indicator with clear success / error messages
 - Logo-derived red theme with a sun/moon toggle to switch Light / Dark
@@ -111,6 +118,10 @@ python app.py --detect "C:\path\essay.docx"          # AI-likelihood estimate
 python app.py --extract-text "C:\path\shot.png" Max  # OCR (Fast/Max): prints the text
 python app.py --identify-font "C:\path\text.png"     # top-5 Google Font matches
 python app.py --split-stems "C:\path\song.mp3"       # 4 stem WAVs next to the song
+python app.py --qr "https://example.com" out.png     # QR code PNG (or .svg)
+python app.py --convert-units "100 km to mi"         # unit conversion
+python app.py --convert-currency 100 USD EUR         # currency (offline rates)
+python app.py --convert-tz "2026-06-13 14:30" Asia/Dubai America/New_York
 ```
 
 ## Standalone .exe (no Python needed)
@@ -128,6 +139,7 @@ pyinstaller --noconfirm --windowed --name "Bu D3eij" `
   --icon "AppLogo.ico" `
   --add-data "AppLogo.ico;." --add-data "DashboardLogo.png;." `
   --add-data "bud3eij_theme.json;." --add-data "assets;assets" `
+  --add-data "assets/data/rates_seed.json;assets/data" `
   --collect-all customtkinter --collect-all tkinterdnd2 `
   --collect-all pptx --collect-all mammoth --collect-all markdownify --collect-all bs4 `
   --collect-data pdfminer --collect-data pdfplumber `
@@ -140,6 +152,7 @@ pyinstaller --noconfirm --windowed --name "Bu D3eij" `
   --collect-all sounddevice --copy-metadata torch `
   --collect-all spandrel --collect-all transformers --collect-all timm `
   --collect-all kornia --collect-all torchvision `
+  --collect-all pint --collect-all tzdata --collect-all qrcode `
   --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
   --hidden-import win32timezone app.py
 ```
@@ -200,6 +213,13 @@ The **Recent** tab lists past conversions (stored in
   on CPU it works but takes ~15–25 minutes per song. The Demucs model
   (~320 MB) downloads once on first use. Stem playback mixes in real time —
   mute/solo/volume changes are heard instantly.
+- **Nexus** is fully offline and key-less. The **currency** converter ships with
+  a bundled ECB rate snapshot so it works on a brand-new machine; **Refresh**
+  fetches today's rates from the open Frankfurter endpoint (a failed refresh
+  just keeps the cached set). **Units** uses `pint` (temperatures handled with
+  correct offsets); **time zones** use the bundled IANA database. The **QR**
+  generator builds the right payload per content type (e.g. a `WIFI:` string for
+  Wi-Fi), previews live, and exports PNG or SVG — nothing is uploaded anywhere.
 
 ## Tech stack
 
@@ -208,4 +228,5 @@ pdfplumber · reportlab · pdf2docx · python-pptx ·
 pymupdf4llm · mammoth · markdownify · yt-dlp · ffmpeg-python ·
 rembg · onnxruntime (Real-ESRGAN, DeBERTa detector, font classifier) ·
 rapidocr · tokenizers · demucs + PyTorch CUDA (stem splitter) · sounddevice ·
-spandrel (UltraSharp V2 upscaler) · transformers/timm/kornia (BiRefNet-HR)
+spandrel (UltraSharp V2 upscaler) · transformers/timm/kornia (BiRefNet-HR) ·
+pint · tzdata · qrcode (Nexus utilities)
