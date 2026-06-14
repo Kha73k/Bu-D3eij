@@ -5,6 +5,17 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v4.3.1 — 2026-06-14
+
+### Fixed
+- **Window dragging is smooth again in the standalone .exe.** The app now sets
+  **per-monitor-v2 DPI awareness** at startup (before the UI loads). The previous
+  exe ran at the older per-monitor-v1 awareness, under which Windows redraws the
+  window laggily while it's dragged — most noticeable in the .exe, which (unlike
+  running from Python) has no manifest of its own to set this. No visual change.
+
+---
+
 ## v4.3 — 2026-06-14
 
 Two new **Marquee** image tools — same no-account, fully-offline, GPU-friendly

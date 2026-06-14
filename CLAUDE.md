@@ -751,6 +751,21 @@ still apply; only the file a function lives in changed.
   HWND (`self.winfo_id()`)**, then one `RedrawWindow`. Freeze the content window,
   **never `GA_ROOT`** — that froze the OS title bar and blanked the min/close
   buttons. Degrades gracefully without pywin32.
+- **Per-monitor-v2 DPI awareness (smooth exe drag, v4.3.1):** the **very top of
+  `app.py`** (before *any* GUI import) calls
+  **`ctypes.windll.user32.SetProcessDpiAwarenessContext(-4)`**
+  (`DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2`), falling back to
+  `shcore.SetProcessDpiAwareness(2)` → `user32.SetProcessDPIAware()`. It must run
+  **first** so CustomTkinter's own (per-monitor **v1**) call becomes a no-op.
+  Under v1, Windows redraws the window frame/content laggily while it is
+  **dragged or resized** — the app itself uses ~0 % CPU during a drag, so the
+  cost is the OS window redraw, which DPI awareness governs. The fix matters most
+  in the **frozen exe**: running from `python.exe` inherits that interpreter's
+  manifest awareness, but the PyInstaller exe has none, so it would otherwise sit
+  at CTk's v1. No visual change at 100 % scaling. (The 2026-06-13 GradientButton
+  drag-suspend is still needed/kept — it stops the button repainting during a
+  drag; this is the *separate* OS-level half.) Resize is still relatively slow
+  (the ScrollArea reflows the page per pixel — see `_on_canvas`); not yet tuned.
 - **Visible-page-only theme toggle (perf, 2026-06-14):** `ctk.set_appearance_mode`
   redraws *every* registered CTk widget — **including the ones on hidden pages** —
   so lazy building (above) only keeps the toggle cheap until you've actually opened

@@ -2,9 +2,9 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-14 (Marquee Image → Prompt + ASCII Art)_
+_Last updated: 2026-06-14 (Marquee Image → Prompt + ASCII Art; DPI drag fix)_
 
-## Status: working app — v4.3 (Marquee: Image → Prompt + ASCII Art; exe rebuilt)
+## Status: working app — v4.3.1 (Marquee Image → Prompt + ASCII Art; smooth-drag DPI fix; exe rebuilt)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
@@ -30,6 +30,25 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-14 — Smooth window drag in the .exe via per-monitor-v2 DPI (v4.3.1)
+User report: window dragging laggy **in the rebuilt .exe** (all tabs, move +
+resize), smooth from source. **Diagnosed, not guessed:** the `GradientButton`
+suspend works and renders are ~2.5 ms (so not the animation); display is 100 %
+(no DPI virtualization); the exe's process uses **~0 % CPU during a drag** → the
+cost is Windows redrawing the *window*, not the app. Both source and exe ran at
+**per-monitor-v1** awareness (set by CustomTkinter); v1 makes Tk window
+drag/resize janky on Windows. **Key context:** the 2026-06-13 drag fix was
+**source-only ("exe rebuild pending")** and the exe was never rebuilt until v4.3,
+so the user's prior reference exe was **v4.1** (pre-fix) — this is the first exe
+to even contain the drag handling, and it was still laggy. **Fix:** `app.py` sets
+**`SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2 = -4)`** at the very top
+(before any GUI import, with fallbacks to v1 → `SetProcessDPIAware`), so
+CustomTkinter's later v1 call is a no-op. The win is largest in the frozen exe,
+which has no `python.exe` manifest to set awareness. No visual change at 100 %.
+**Verified:** awareness probe now reports v2; GUI smoke 109/0; **user-confirmed
+dragging is smooth in the rebuilt exe.** (Resize is still relatively slow — a
+separate, pre-existing ScrollArea reflow cost, not addressed here.)
 
 ### 2026-06-14 — Marquee: Image → Prompt + ASCII Art (v4.3)
 Two new tools in the **Marquee** multi-tool switcher (now 4 tools), same pattern

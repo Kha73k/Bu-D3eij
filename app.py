@@ -16,6 +16,29 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+
+# On Windows, become per-monitor-v2 DPI aware BEFORE any GUI import. CustomTkinter
+# would otherwise set the older per-monitor-v1 awareness, under which Windows
+# redraws the window frame/content laggily while the window is dragged or resized;
+# v2 composites it smoothly (no visual change at 100% scaling). This must run
+# first so CustomTkinter's later, weaker call becomes a no-op. The biggest win is
+# in the frozen exe, where there is no python.exe manifest to set awareness.
+if sys.platform == "win32":
+    try:
+        import ctypes
+
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == -4 (Windows 10 1703+)
+        if not ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            raise OSError("per-monitor-v2 unavailable")
+    except Exception:  # noqa: BLE001 - fall back through older DPI APIs
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor v1
+        except Exception:  # noqa: BLE001
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()  # system aware (Vista+)
+            except Exception:  # noqa: BLE001
+                pass
+
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -217,7 +240,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "4.3"
+APP_VERSION = "4.3.1"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
