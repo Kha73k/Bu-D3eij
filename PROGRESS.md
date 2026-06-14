@@ -2,7 +2,7 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-13 (Nexus utilities section)_
+_Last updated: 2026-06-14 (theme-toggle + resize perf fix)_
 
 ## Status: working app — v4.2 (Nexus utilities; exe rebuild pending)
 
@@ -29,6 +29,36 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-14 — Theme-toggle + resize responsiveness fix (perf)
+- **Diagnosed by measurement, not guesswork** (throwaway probes under
+  `tools/_perf_probe*.py` + an instrumented launcher driven via real OS
+  drag/resize). Findings: a same-monitor **window move is smooth** (~2 ms/event,
+  `<Configure>` fires continuously and the `GradientButton._suspended` pause
+  engages); both monitors are 100 % DPI so cross-monitor rescale wasn't it. The
+  two real costs were the **theme toggle** (~320 ms once every page was built)
+  and **window resize** (~68 ms/step, ~24 ms of it new ScrollArea churn). Root
+  cause of both: CustomTkinter redraws **every registered widget across all built
+  pages**, and `ScrollArea._sync` recomputed layout on every resize pixel.
+- **Toggle fix — visible-page-only redraw.** `_toggle_appearance` now
+  `_detach_hidden_pages()` (removes hidden built pages' widget callbacks from
+  `AppearanceModeTracker.callback_list`) around the `set_appearance_mode` call,
+  restores them in a `finally` (`_reattach_pages`), and flags each hidden page in
+  `self._appearance_stale`. `show_frame` recolours a stale page's subtree
+  (`_refresh_page_appearance`) just before showing it. **Measured 320 → ~46 ms**
+  with all pages built (≈ the Converter-only cost). Supersedes the old
+  Recent-rows-destroy hack. Degrades to a full redraw if CTk internals move.
+- **Resize fix — coalesced ScrollArea sync.** `_on_canvas` sets only the embedded
+  window *width* immediately (page keeps filling horizontally) and debounces the
+  heavier `_sync` to one call per idle (`_schedule_sync`/`_run_sync`); `_sync`
+  grid/grid_removes the scrollbar only when the overflow state flips
+  (`self._overflow`). `to_top()` (page switch) still syncs synchronously for a
+  snappy first paint.
+- **Verified:** 93/93 GUI smoke tests (added 4 covering the toggle: mode flips,
+  hidden pages marked stale + visible one not, no callback leak after toggle,
+  stale page refreshed on show). Real-app run confirmed the toggle is visually
+  instant and a page hidden during a toggle recolours correctly when reopened
+  (both Dark→Light and Light→Dark).
 
 ### 2026-06-13 — Scrollable pages + Clear/Reset everywhere (v4.2.1)
 - **`ScrollArea`** now hosts the page frames (root col 1): a `tk.Canvas` +

@@ -61,6 +61,33 @@ check("scrollbar shows when window too small",
 a.geometry("1100x820")
 a.update()
 
+# theme toggle: only the page on screen recolours; hidden built pages are
+# detached from CustomTkinter's redraw and refreshed lazily on their next show
+# (the fix for the toggle that crept to ~320 ms once every page was built)
+from customtkinter.windows.widgets.appearance_mode.appearance_mode_tracker import (  # noqa: E402
+    AppearanceModeTracker)
+a.show_frame("Converter")
+a.update()
+_before_mode = a.appearance_mode
+_n_callbacks = len(AppearanceModeTracker.callback_list)
+a._toggle_appearance()
+a.update()
+check("appearance mode flips", a.appearance_mode != _before_mode, a.appearance_mode)
+check("hidden pages marked stale, visible one is not",
+      "Nexus" in a._appearance_stale and "Converter" not in a._appearance_stale,
+      sorted(a._appearance_stale))
+check("appearance callbacks restored (no leak) after toggle",
+      len(AppearanceModeTracker.callback_list) == _n_callbacks,
+      len(AppearanceModeTracker.callback_list))
+a.show_frame("Nexus")  # showing a stale page refreshes it
+a.update()
+check("stale page refreshed on show", "Nexus" not in a._appearance_stale,
+      sorted(a._appearance_stale))
+a._toggle_appearance()  # back to the original mode for the rest of the run
+a.update()
+a.show_frame("Converter")
+a.update()
+
 # new widgets exist
 check("upscaler FIT selector", hasattr(a, "up_fit") and a.up_fit.get() == "Pad")
 check("batch status label", hasattr(a, "batch_status"))

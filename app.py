@@ -974,8 +974,10 @@ class ScrollArea(ctk.CTkFrame):
         self.inner.grid_rowconfigure(0, weight=1)
         self.inner.grid_columnconfigure(0, weight=1)
         self._win = self._canvas.create_window((0, 0), window=self.inner, anchor="nw")
+        self._sync_after = None   # coalesces the heavier sync to one call per idle
+        self._overflow = False    # last known "content taller than viewport" state
         self._canvas.bind("<Configure>", self._on_canvas)
-        self.inner.bind("<Configure>", lambda _e: self._sync())
+        self.inner.bind("<Configure>", lambda _e: self._schedule_sync())
         # bind_all so the wheel works wherever the pointer is over a page; the
         # handler no-ops unless the page actually overflows (so inner scrollables
         # — the Recent list, textboxes — keep their own wheel behaviour).
@@ -988,8 +990,22 @@ class ScrollArea(ctk.CTkFrame):
         self._canvas.configure(bg=self._bg())
 
     def _on_canvas(self, event):
+        # The embedded window's WIDTH must track the canvas immediately so the
+        # page fills horizontally as the window resizes. The heavier part —
+        # measuring content height, resizing the scrollregion, showing/hiding
+        # the scrollbar — is coalesced to one call per idle so a fast resize
+        # drag doesn't recompute it on every single pixel (that churn was ~24 ms
+        # per resize step with all pages built).
         self._canvas.itemconfigure(self._win, width=event.width)
-        self._sync(event.height)
+        self._schedule_sync()
+
+    def _schedule_sync(self):
+        if self._sync_after is None:
+            self._sync_after = self.after_idle(self._run_sync)
+
+    def _run_sync(self):
+        self._sync_after = None
+        self._sync()
 
     def _sync(self, canvas_h: int | None = None):
         if canvas_h is None:
@@ -999,15 +1015,24 @@ class ScrollArea(ctk.CTkFrame):
         self._canvas.itemconfigure(self._win, height=height)
         self._canvas.configure(
             scrollregion=(0, 0, self._canvas.winfo_width(), height))
-        if content_h > canvas_h + 1:
-            self._sb.grid(row=0, column=1, sticky="ns", padx=(2, 0))
-        else:
-            self._sb.grid_remove()
+        overflow = content_h > canvas_h + 1
+        # Only touch the scrollbar's grid when the overflow state actually flips
+        # — grid/grid_remove forces a parent relayout, so doing it every pixel
+        # made resizing thrash.
+        if overflow != self._overflow:
+            self._overflow = overflow
+            if overflow:
+                self._sb.grid(row=0, column=1, sticky="ns", padx=(2, 0))
+            else:
+                self._sb.grid_remove()
+        if not overflow:
             self._canvas.yview_moveto(0.0)
 
     def to_top(self):
+        # A page switch is infrequent and wants a snappy first paint, so size it
+        # synchronously (the debounce is only to tame rapid resize-drag events).
         self._canvas.yview_moveto(0.0)
-        self.after_idle(self._sync)
+        self._sync()
 
     def _on_wheel(self, event):
         # Only hijack the wheel when the page overflows the viewport…
@@ -1069,6 +1094,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self._sn_tick_after = None   # playback-position updater after() handle
         self._sn_slider_drag = False # True while the tick loop writes the slider
         self._recent_dirty = True    # rebuild the Recent table only when changed
+        self._appearance_stale: set[str] = set()  # built pages that missed a theme toggle
         self._win_geom = None        # last (x,y,w,h); detects real move/resize
         self._anim_resume_id = None  # debounce handle for resuming button anims
 
@@ -1332,6 +1358,12 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             frame = builder(self._frame_container)
             frame.grid(row=0, column=0, sticky="nsew")
             self.frames[name] = frame
+        # If this page missed a theme toggle while it was hidden (its widgets
+        # were detached from CustomTkinter's redraw to keep the toggle fast),
+        # bring it up to the current mode before it's shown.
+        if name in self._appearance_stale:
+            self._appearance_stale.discard(name)
+            self._refresh_page_appearance(frame)
         self._current_frame = name
         # grid/grid_remove (not tkraise) so a CTkScrollableFrame raises reliably
         # above the plain sibling frames sharing the same grid cell.
@@ -1359,22 +1391,90 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _toggle_appearance(self):
         """Flip between Dark and Light; the icon shows the mode you can switch to."""
         self.appearance_mode = "Light" if self.appearance_mode == "Dark" else "Dark"
-        # set_appearance_mode redraws every registered widget — including the
-        # Recent rows even while they're hidden. On a large history that's the
-        # bulk of the toggle's cost, so when Recent isn't on screen, drop its
-        # rows first (they rebuild lazily on the next visit via _recent_dirty).
-        if self._current_frame != "Recent" and hasattr(self, "recent_scroll"):
-            children = self.recent_scroll.winfo_children()
-            if children:
-                for child in children:
-                    child.destroy()
-                self._recent_dirty = True
-        self._frozen_redraw(lambda: ctk.set_appearance_mode(self.appearance_mode))
+        # ctk.set_appearance_mode redraws *every* registered widget — including
+        # the ones on hidden pages — so the cost grew with each tool page opened
+        # (~320 ms once all of them were built). Only the page on screen needs
+        # to recolour now: detach the hidden built pages from CustomTkinter's
+        # appearance tracker for the duration of the toggle, then mark them so
+        # they recolour lazily the next time they're shown (see show_frame).
+        detached = self._detach_hidden_pages()
+        try:
+            self._frozen_redraw(lambda: ctk.set_appearance_mode(self.appearance_mode))
+        finally:
+            self._reattach_pages(detached)
         if hasattr(self, "_scroll_area"):
             self._scroll_area.refresh_bg()  # raw tk.Canvas bg isn't auto-themed
         self.theme_toggle.configure(
             text=SUN_GLYPH if self.appearance_mode == "Dark" else MOON_GLYPH
         )
+
+    @staticmethod
+    def _collect_widgets(widget, into: set) -> None:
+        into.add(widget)
+        for child in widget.winfo_children():
+            App._collect_widgets(child, into)
+
+    def _detach_hidden_pages(self) -> list:
+        """Remove every hidden built page's widgets from CustomTkinter's
+        appearance-mode callback list so the next theme toggle skips them.
+
+        Returns the removed callbacks so they can be re-added afterwards. The
+        sidebar, the page on screen, and all the window chrome stay registered,
+        so they recolour immediately; the hidden pages are flagged stale and
+        recoloured on their next show_frame. Degrades to a no-op (full redraw)
+        if CustomTkinter's internals ever move.
+        """
+        try:
+            from customtkinter.windows.widgets.appearance_mode.appearance_mode_tracker \
+                import AppearanceModeTracker
+        except Exception:  # noqa: BLE001
+            return []
+        visible = self.frames.get(self._current_frame)
+        hidden_widgets: set = set()
+        for name, frame in self.frames.items():
+            if frame is visible:
+                continue
+            self._collect_widgets(frame, hidden_widgets)
+            self._appearance_stale.add(name)
+        if not hidden_widgets:
+            return []
+        detached = [cb for cb in AppearanceModeTracker.callback_list
+                    if getattr(cb, "__self__", None) in hidden_widgets]
+        for cb in detached:
+            try:
+                AppearanceModeTracker.callback_list.remove(cb)
+            except ValueError:
+                pass
+        return detached
+
+    @staticmethod
+    def _reattach_pages(detached: list) -> None:
+        if not detached:
+            return
+        try:
+            from customtkinter.windows.widgets.appearance_mode.appearance_mode_tracker \
+                import AppearanceModeTracker
+        except Exception:  # noqa: BLE001
+            return
+        existing = AppearanceModeTracker.callback_list
+        for cb in detached:
+            if cb not in existing:
+                existing.append(cb)
+
+    def _refresh_page_appearance(self, frame) -> None:
+        """Bring a page that missed one or more theme toggles up to the current
+        mode by recolouring its whole subtree (cost = that one page)."""
+        mode = self.appearance_mode
+        stack = [frame]
+        while stack:
+            w = stack.pop()
+            fn = getattr(w, "_set_appearance_mode", None)
+            if fn is not None:
+                try:
+                    fn(mode)
+                except Exception:  # noqa: BLE001
+                    pass
+            stack.extend(w.winfo_children())
 
     def _frozen_redraw(self, fn):
         """Run `fn` with window painting frozen, then repaint once (no flicker).

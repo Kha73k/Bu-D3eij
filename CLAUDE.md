@@ -683,6 +683,23 @@ still apply; only the file a function lives in changed.
   HWND (`self.winfo_id()`)**, then one `RedrawWindow`. Freeze the content window,
   **never `GA_ROOT`** — that froze the OS title bar and blanked the min/close
   buttons. Degrades gracefully without pywin32.
+- **Visible-page-only theme toggle (perf, 2026-06-14):** `ctk.set_appearance_mode`
+  redraws *every* registered CTk widget — **including the ones on hidden pages** —
+  so lazy building (above) only keeps the toggle cheap until you've actually opened
+  the tool pages; once all nine were built it crept back to **~320 ms**. Fix:
+  `_toggle_appearance` calls **`_detach_hidden_pages()`** first, which walks every
+  built-but-hidden page's subtree (`_collect_widgets`) and **removes those widgets'
+  callbacks from `AppearanceModeTracker.callback_list`** (CustomTkinter's
+  appearance-redraw registry) for the duration of the `set_appearance_mode` call —
+  so only the page on screen + the sidebar/chrome recolour (**~46 ms regardless of
+  how many pages are built**). The callbacks are restored in a `finally`
+  (`_reattach_pages`), and each hidden page is flagged in **`self._appearance_stale`**;
+  `show_frame` recolours a stale page's whole subtree (**`_refresh_page_appearance`**,
+  cost = that one page) just before showing it, then clears the flag. The detach
+  degrades to a no-op (full redraw) if CustomTkinter's internals ever move. This
+  **supersedes** the old Recent-rows-destroy hack (the hidden Recent page, like
+  every other, is simply detached now). When adding a page, nothing special is
+  needed — it rides this automatically.
 - **Scrollable page host (`ScrollArea`, v4.2.1):** the content area (root col 1)
   is a `ScrollArea` (a `tk.Canvas` + `CTkScrollbar` + inner `CTkFrame`); pages
   grid into **`self._frame_container = self._scroll_area.inner`** exactly as
@@ -698,6 +715,18 @@ still apply; only the file a function lives in changed.
   `_toggle_appearance` calls `_scroll_area.refresh_bg()`; `show_frame` calls
   `to_top()` (a new page may be a different height). When adding a page, nothing
   special is needed — it rides this automatically.
+  **Resize perf (2026-06-14):** `_sync` (the part that measures content height,
+  resizes the scrollregion and shows/hides the scrollbar) used to run on *every*
+  resize pixel via both the canvas and the inner `<Configure>` — that forced a
+  synchronous `winfo_reqheight()` reflow per pixel and grid/grid_removed the
+  scrollbar constantly (a parent relayout), ~24 ms of churn per resize step with
+  every page built. Now `_on_canvas` sets only the embedded window **width**
+  immediately (so the page keeps filling horizontally) and **coalesces `_sync` to
+  one call per idle** (`_schedule_sync` → `after_idle` → `_run_sync`); `_sync`
+  only touches the scrollbar's grid when the **overflow state actually flips**
+  (tracked in `self._overflow`). `to_top()` (page switch — infrequent, wants a
+  snappy first paint) still calls `_sync()` **synchronously**; only the rapid
+  resize-event stream is debounced.
 - **Clear/Reset buttons (v4.2.1):** every file/result tool page has one beside its
   primary CTA (the Converter + AI Detector already did). The outlined button comes
   from **`_clear_button(parent, command)`**; image/audio drop-zone panels reset via
@@ -719,12 +748,12 @@ still apply; only the file a function lives in changed.
   `self._recent_dirty`** and rebuilds only when the history actually changed —
   `show_frame` calls it on every Recent visit but it no-ops when clean (it was
   rebuilding from scratch each time: ~0.5 s at 14 rows, seconds at 100).
-  `add_history`/`clear_history`/the initial build set the flag. Because
-  `set_appearance_mode` redraws every registered widget (hidden ones too), the
-  Recent rows also taxed the theme toggle, so `_toggle_appearance` **destroys
-  the rows (marking dirty) when Recent isn't on screen** before flipping — they
-  rebuild lazily on the next visit. Don't reintroduce an unconditional
-  per-show rebuild.
+  `add_history`/`clear_history`/the initial build set the flag. Don't
+  reintroduce an unconditional per-show rebuild. (The Recent rows also used to
+  tax the theme toggle, so `_toggle_appearance` destroyed them when Recent was
+  off-screen; that hack is **gone as of 2026-06-14** — the visible-page-only
+  toggle detaches the whole hidden Recent page along with every other, so its
+  rows no longer redraw on a toggle regardless.)
 - **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT`,
   `--download URL FORMAT` (mp3/mp4, saves to cwd), `--remove-bg FILE [TIER]`
   (transparent PNG next to the source; TIER = Flash/Mid/Omega, default Mid),
