@@ -5,6 +5,34 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v4.3 — 2026-06-14
+
+Two new **Marquee** image tools — same no-account, fully-offline, GPU-friendly
+rule as the rest of the app.
+
+### Added
+- **Image → Prompt.** Drop in an image and get a detailed text-to-image prompt
+  back — the subject, setting, art style, lighting, colour palette and
+  composition — ready to paste into an image generator. Runs **Qwen2-VL-2B**
+  on your GPU, fully offline; pick **Concise** (a one-liner) or **Detailed**
+  (a full prompt) and copy the result to the clipboard. The ~4.4 GB model
+  downloads once on first use, then it's offline forever.
+- **ASCII Art.** Turn any image into ASCII — choose the output width, optionally
+  invert the shading, and (for the PNG export) colour each character from the
+  source. Preview it, copy it, or save it as a `.txt` or a rendered `.png`.
+  Instant and 100% offline — no model, no download.
+- Both ship as headless flags too: `--image-prompt FILE [Concise|Detailed]`
+  and `--ascii FILE [WIDTH]`.
+
+### Notes
+- The obvious smaller captioner (Microsoft's Florence-2) was evaluated and
+  skipped: its bundled model code is incompatible with the app's current
+  transformers version. Qwen2-VL is a first-class transformers model (no remote
+  code), is ungated and Apache-licensed, and produces richer, instructable
+  prompts — and it fits comfortably in 8 GB.
+
+---
+
 ## v4.1 — 2026-06-11
 
 The Marquee image tools get the same GPU treatment as Sonara — best-in-class

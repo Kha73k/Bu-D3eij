@@ -33,6 +33,15 @@ time zones — all offline, no account, no limits) and a **QR Code** generator.
 Pure logic lives in `bud3eij/nexus.py`; new deps are **`pint`** (units),
 **`tzdata`** (time zones) and **`qrcode[pil]`** (QR) — no ML, nothing in
 `~/.bud3eij/models/` — details inline below.
+**v4.3** adds two more **Marquee** tools (the switcher is now 4 tools):
+**Image → Prompt** (`bud3eij/imageprompt.py` — describe an image as a detailed
+text-to-image prompt via **Qwen2-VL-2B** on torch CUDA; copy-to-clipboard, no
+file output) and **ASCII Art** (`bud3eij/asciiart.py` — pure PIL/numpy, no
+model). **No new pip dep or build collector** — Qwen2-VL is a first-class
+transformers model (no `trust_remote_code`), so the already-collected
+`transformers`/`torch`/`torchvision` cover it. (Florence-2 was the first pick
+and was dropped: its remote-code config crashes on transformers 5.x.) Details
+inline below.
 
 ## Environment (important)
 - **Runtime is the Python 3.11 venv at `.venv`** — always use it:
@@ -77,6 +86,10 @@ Pure logic lives in `bud3eij/nexus.py`; new deps are **`pint`** (units),
 # Headless OCR / font identification (also work on the exe)
 .\.venv\Scripts\python app.py --extract-text "C:\path\screenshot.png"
 .\.venv\Scripts\python app.py --identify-font "C:\path\text.png"
+
+# Headless Marquee image->prompt / ASCII art (also work on the exe)
+.\.venv\Scripts\python app.py --image-prompt "C:\path\photo.png" Detailed
+.\.venv\Scripts\python app.py --ascii "C:\path\photo.png" 120
 
 # Headless stem splitting -> 4 WAVs next to the source (also works on the exe)
 .\.venv\Scripts\python app.py --split-stems "C:\path\song.mp3"
@@ -261,13 +274,15 @@ still apply; only the file a function lives in changed.
   (`preferedformat` — yt-dlp's spelling) so a single-file webm-only download still
   lands as `.mp4`; `_yt_hook` is **throttled to ≥100 ms** between UI posts
   (yt-dlp fires per network block — unthrottled it floods the Tk event queue).
-- **Marquee = a multi-tool image-editing page (tool switcher added v2.3).**
-  `_build_marquee` is now a shared `_section_header` + a `CTkSegmentedButton`
-  (`self.mq_tool`: "Background Remover" / "Upscaler") + a container holding two
-  self-contained panels, `_build_mq_bgremover` and `_build_mq_upscaler`, swapped by
-  `_show_mq_tool` (grid/grid_remove). Each panel keeps its own drop zone, controls,
-  progress bar, and status, with its own `mq_*`/`up_*` attrs and handlers. Add the
-  next image tool as a third value + `_build_mq_<tool>` panel.
+- **Marquee = a multi-tool image-editing page (tool switcher added v2.3, now 4
+  tools).** `_build_marquee` is a shared `_section_header` + a
+  `CTkSegmentedButton` (`self.mq_tool`: "Background Remover" / "Upscaler" /
+  "Image → Prompt" / "ASCII Art") + a container holding four self-contained
+  panels (`_build_mq_bgremover`, `_build_mq_upscaler`, `_build_mq_imageprompt`,
+  `_build_mq_ascii`), swapped by `_show_mq_tool` (grid/grid_remove). Each panel
+  keeps its own drop zone, controls, progress bar, and status, with its own
+  `mq_*`/`up_*`/`ip_*`/`asc_*` attrs and handlers. Add the next image tool as a
+  fifth value + `_build_mq_<tool>` panel.
 - **Marquee → Background Remover (v2.0, model selector in v2.1):**
   `remove_background(src, out_path=None, model="isnet-general-use")` (rembg, lazy
   import) opens the image, runs the chosen rembg model, and saves a transparent
@@ -337,6 +352,59 @@ still apply; only the file a function lives in changed.
   Pad/Crop via `App.UPSCALE_FITS`). SR is **skipped below `_SR_MIN_GAIN`
   (1.25×)** — a full ×4 pass then a Lanczos *down*scale costs minutes + ~GB RAM
   for a near-identical result. Also gained `overwrite` + `unload_models()`.
+- **Marquee → Image → Prompt (v4.3):** `image_to_prompt(src, mode="Detailed",
+  progress=None)` in `bud3eij/imageprompt.py` (lazy import) describes an image as
+  a detailed text-to-image prompt (subject/setting/style/lighting/colour/
+  composition). Runs **Qwen2-VL-2B-Instruct** (`Qwen/Qwen2-VL-2B-Instruct`,
+  Apache-2.0, **ungated**, ~4.4 GB) on **torch CUDA** in **bf16** (~5–6 GB peak,
+  fits 8 GB), loaded once via `from_pretrained` (model + `AutoProcessor`) into
+  `HF_HOME = ~/.bud3eij/models/hf` with a **pinned `QWEN_REVISION`**; vision
+  tokens bounded via the processor's `min_pixels`/`max_pixels` so a big image
+  can't blow the budget. Cached in module globals `_MODEL`/`_PROCESSOR`/`_DEVICE`
+  + `unload_models()` (Tools button). It's a **first-class transformers model
+  (NO `trust_remote_code`)** → compatible with the `transformers>=5` pin and
+  needs **no new dep/collector** (transformers/torch/torchvision already
+  bundled). **`PROMPT_MODES`** (`DEFAULT_PROMPT_MODE = "Detailed"`) maps a free
+  **DETAIL** mode (Concise / Detailed) to the *instruction string* handed to the
+  model — same model, no tier. Sits **outside** `convert_file`/`CONVERSIONS`;
+  produces text (copied to the clipboard), **no file output, no `add_history`**.
+  GUI panel `_build_mq_imageprompt` (attrs `ip_*`, file `self.iprompt_file`)
+  **mirrors the Vanguard OCR panel** (`_on_ip_mode_change`/`on_ip_drop`/
+  `browse_ip`/`set_ip_file` via `_set_image_file`/`on_ip_run`/`_ip_worker`/
+  `_ip_done` (custom — no history)/`_ip_copy`/`reset_imageprompt`): drop zone →
+  DETAIL segmented (`self.ip_mode`) → **Describe Image** GradientButton →
+  eased-fill progress → results card (read-only textbox + Copy to clipboard).
+  Panel icon `assets/ui/type.png`. CLI: `--image-prompt FILE [Concise|Detailed]`.
+  **Florence-2 was the original choice and was dropped** — its
+  `trust_remote_code` config (`configuration_florence2.py`) crashes on
+  transformers 5.x (`Florence2LanguageConfig` has no `forced_bos_token_id` —
+  generation attrs moved out of `PretrainedConfig`); don't reintroduce it without
+  re-verifying against the installed transformers. Moondream2 (also remote-code)
+  and BLIP-large (native but too terse) were the documented fallbacks; Qwen2-VL
+  beat both (native + instructable + detailed). **Do not downgrade transformers**
+  to revive Florence-2 — it would break BiRefNet/the other 5.x paths.
+- **Marquee → ASCII Art (v4.3):** `image_to_ascii(src, width=120, invert=False)`
+  (plain text for preview/copy/`.txt`) and `save_ascii(src, out_path, *,
+  width=120, invert=False, color=False, overwrite=False)` in `bud3eij/asciiart.py`
+  — **pure PIL+numpy, no model, no download, instant, fully offline**. Maps
+  luminance onto the `RAMP` (brightest→darkest) at `width` columns with a ~0.5
+  vertical `ASPECT` correction (chars are ~2× tall); `_grid()` is the shared
+  helper returning the char/colour ndarrays. `.txt` writes the text; `.png`
+  renders a **fixed character-cell grid** (cell sized to the widest ramp glyph of
+  `ImageFont.load_default(size=…)` so columns align regardless of font
+  proportionality), `color=True` tints each glyph from the source on black.
+  Honours the standard `overwrite`/`unique_path` contract. Sits **outside**
+  `convert_file`/`CONVERSIONS`; **produces a file → uses `add_history`**. GUI
+  panel `_build_mq_ascii` (attrs `asc_*`, file `self.ascii_file`): drop zone →
+  **WIDTH** segmented (`self.ASCII_WIDTHS` 80/120/160/200) + **Invert** + **Colour
+  (PNG)** `CTkSwitch`es → **Convert to ASCII** GradientButton (computes the
+  preview) → eased-fill progress → results card (monospace preview textbox
+  `wrap="none"` + **Copy** + **Save…**). Handlers `on_asc_drop`/`browse_asc`/
+  `set_asc_file`/`on_asc_run`/`_asc_worker`/`_asc_done`/`_asc_copy`/`on_asc_save`
+  (asks `.txt`/`.png` via `_ask_save("ascii_save")` → `_asc_save_worker`/
+  `_asc_save_done` → `add_history`)/`reset_ascii`; the run stores `self._asc_opts`
+  (width/invert) so Save matches the preview (colour read live). Panel icon
+  reuses `assets/ui/sparkles.png`. CLI: `--ascii FILE [WIDTH]` (prints the text).
 - **Vanguard = a multi-tool AI-text page (tool switcher added v3.2).** Same
   pattern as Marquee: `_build_vanguard` is `_section_header` + a
   `CTkSegmentedButton` (`self.vg_tool`: "AI Detector" / "Text Extraction" /
@@ -763,7 +831,9 @@ still apply; only the file a function lives in changed.
   `--split-stems FILE` (saves the 4 stem WAVs next to the source), and the v4.2
   Nexus flags — `--qr "TEXT" [OUTFILE]` (PNG, or `.svg` by extension),
   `--convert-units "100 km to mi"`, `--convert-currency AMT SRC DST`,
-  `--convert-tz "<datetime>" SRC DST` — run
+  `--convert-tz "<datetime>" SRC DST`, plus the v4.3 Marquee flags —
+  `--image-prompt FILE [Concise|Detailed]` (prints the prompt) and
+  `--ascii FILE [WIDTH]` (prints the ASCII art) — run
   headless; extra positional args are rejected with a clear `parser.error`.
   (**Note:** the file converter already owns `--convert FILE FORMAT`, so the unit
   converter is `--convert-units`, not an overload of `--convert`.)
@@ -861,6 +931,8 @@ bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
   sonara.py       split_stems + save_stem + STEMS (Sonara stem splitter, Demucs)
   stemplayer.py   StemPlayer (real-time 4-stem mixer on sounddevice)
   nexus.py        currency/units/timezone converters + QR builders (Nexus, v4.2)
+  imageprompt.py  image_to_prompt + PROMPT_MODES (Marquee Image → Prompt, Qwen2-VL, v4.3)
+  asciiart.py     image_to_ascii + save_ascii (Marquee ASCII Art, pure PIL/numpy, v4.3)
 requirements.txt  runtime deps (pyinstaller is dev-only, installed separately)
 README.md         user-facing docs
 CLAUDE.md         this file

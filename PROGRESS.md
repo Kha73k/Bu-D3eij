@@ -2,9 +2,9 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-14 (theme-toggle + resize perf fix)_
+_Last updated: 2026-06-14 (Marquee Image → Prompt + ASCII Art)_
 
-## Status: working app — v4.2 (Nexus utilities; exe rebuild pending)
+## Status: working app — v4.3 (Marquee: Image → Prompt + ASCII Art; exe rebuilt)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
@@ -23,12 +23,47 @@ v3.1.5 = dopamine CTA redesign; v3.2 = Vanguard becomes multi-tool (OCR +
 font identification); **v4.0 = Sonara audio section — Demucs stem splitter +
 real-time 4-stem mixer (first PyTorch/CUDA dependency)**; v4.1 = Marquee GPU
 upgrade (UltraSharp V2 + BiRefNet-HR); **v4.2 = Nexus utilities section
-(offline currency/units/time-zone converter + QR-code generator)**.
+(offline currency/units/time-zone converter + QR-code generator)**; **v4.3 =
+Marquee gains Image → Prompt (Qwen2-VL-2B image captioner) + ASCII Art**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-14 — Marquee: Image → Prompt + ASCII Art (v4.3)
+Two new tools in the **Marquee** multi-tool switcher (now 4 tools), same pattern
+as the existing panels (`_build_mq_<tool>` + `_show_mq_tool`); pure logic in
+`bud3eij/`, re-exported from `app.py`; both also exposed as headless CLI flags.
+- **Image → Prompt** (`bud3eij/imageprompt.py`): `image_to_prompt(src, mode)`
+  describes an image as a detailed text-to-image prompt. A free **DETAIL** mode
+  swaps the instruction (Concise = one-liner / Detailed = full prompt) — same
+  model, no tier. Copy-to-clipboard, **no file output** (mirrors the Vanguard
+  OCR panel: `_build_mq_imageprompt` + `on_ip_*`/`_ip_*`/`reset_imageprompt`).
+  CLI: `--image-prompt FILE [Concise|Detailed]`.
+  - **Model: Qwen2-VL-2B-Instruct** (Apache-2.0, **ungated**, ~4.4 GB) on torch
+    CUDA in bf16 (~5–6 GB peak, fits 8 GB), loaded via `from_pretrained` into
+    `HF_HOME = ~/.bud3eij/models/hf`, **revision pinned**, `unload_models()`
+    wired to the Tools button. It's a **first-class transformers model (no
+    `trust_remote_code`)** so it stays compatible with the project's
+    `transformers>=5` pin and needs **no new pip dep or build collector**
+    (transformers/torch/torchvision are already collected).
+  - **Florence-2 was the original pick and was dropped:** its `trust_remote_code`
+    config code crashes on transformers 5.11 (`Florence2LanguageConfig has no
+    attribute 'forced_bos_token_id'` — generation attrs moved out of
+    `PretrainedConfig` in transformers 5.x). Verified up front per the
+    model-gating rule; not a rabbit hole — pivoted to a model that loads cleanly.
+- **ASCII Art** (`bud3eij/asciiart.py`, pure PIL+numpy, **no model/download**):
+  `image_to_ascii(src, width, invert)` (preview/copy/`.txt`) and
+  `save_ascii(src, out, width, invert, color, overwrite)` (`.txt` or a rendered
+  `.png` via a fixed character-cell grid; `color` tints glyphs from the source).
+  GUI: WIDTH (80/120/160/200) + Invert + Colour, preview textbox + Copy + Save…
+  (`_build_mq_ascii` + `on_asc_*`/`_asc_*`/`reset_ascii`). CLI: `--ascii FILE [WIDTH]`.
+- **Verified:** headless module tests (ASCII width/invert/dedup + `.png` render;
+  Image → Prompt load+caption on CUDA — confirmed a detailed, on-point prompt
+  for a test scene) and a GUI wiring smoke (4 tools build/switch, CTAs are
+  GradientButtons, resets clean). Added to `tests/test_headless.py` +
+  `tests/test_gui_smoke.py`; exe rebuilt.
 
 ### 2026-06-14 — Theme-toggle + resize responsiveness fix (perf)
 - **Diagnosed by measurement, not guesswork** (throwaway probes under

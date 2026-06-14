@@ -362,9 +362,55 @@ svg_text = nexus.save_qr("hi", tmp / "qr.svg", fmt="svg", fg="#123456", bg="#ABC
                          overwrite=True).read_text(encoding="utf-8")
 check("qr svg recolored", "#123456" in svg_text and "#ABCDEF" in svg_text)
 
+# ---- 7g. marquee: ASCII art (pure PIL/numpy, no model) -----------------------
+print("\n[7g] ASCII art")
+from bud3eij.asciiart import image_to_ascii, save_ascii  # noqa: E402
+
+asc_txt = image_to_ascii(ocr_src, width=100)
+asc_lines = asc_txt.split("\n")
+check("ascii respects width", max(len(line) for line in asc_lines) <= 100,
+      str(max(len(line) for line in asc_lines)))
+check("ascii has rows", len(asc_lines) > 3, str(len(asc_lines)))
+check("ascii invert changes output",
+      image_to_ascii(ocr_src, width=100, invert=True) != asc_txt)
+asc_out_txt = save_ascii(ocr_src, tmp / "art.txt", width=80)
+check("ascii .txt written", asc_out_txt.exists() and asc_out_txt.suffix == ".txt")
+asc_out_png = save_ascii(ocr_src, tmp / "art.png", width=80, color=True)
+with Image.open(asc_out_png) as im:
+    check("ascii .png rendered RGB", im.mode == "RGB" and im.size[0] > 0, str(im.size))
+ad1 = save_ascii(ocr_src, tmp / "artdup.txt", width=60)
+ad2 = save_ascii(ocr_src, tmp / "artdup.txt", width=60)
+ad3 = save_ascii(ocr_src, tmp / "artdup.txt", width=60, overwrite=True)
+check("ascii default de-duplicates", ad2 != ad1, str(ad2))
+check("ascii overwrite keeps chosen path", ad3 == ad1, str(ad3))
+try:
+    image_to_ascii(tmp / "note.txt")
+    check("ascii rejects non-image", False)
+except ConversionError:
+    check("ascii rejects non-image", True)
+
+# ---- 7h. marquee: image -> prompt (Qwen2-VL-2B — loads ~4.4 GB, slow) --------
+print("\n[7h] image -> prompt (Qwen2-VL-2B; first ever run downloads ~4.4 GB)")
+from bud3eij.imageprompt import PROMPT_MODES, image_to_prompt  # noqa: E402
+
+check("PROMPT_MODES has Concise + Detailed",
+      set(PROMPT_MODES) >= {"Concise", "Detailed"}, str(set(PROMPT_MODES)))
+ip_text = image_to_prompt(src_png, mode="Detailed")
+check("image_to_prompt returns text",
+      isinstance(ip_text, str) and len(ip_text) > 10, repr(ip_text[:60]))
+check("image_to_prompt concise mode returns text",
+      isinstance(image_to_prompt(src_png, mode="Concise"), str))
+try:
+    image_to_prompt(tmp / "note.txt")
+    check("image_to_prompt rejects non-image", False)
+except ConversionError:
+    check("image_to_prompt rejects non-image", True)
+
 # ---- 8. unload functions -----------------------------------------------------
 print("\n[8] unload functions")
-from bud3eij import background, fontid, ocr, sonara, upscale, vanguard  # noqa: E402
+from bud3eij import (  # noqa: E402
+    background, fontid, imageprompt, ocr, sonara, upscale, vanguard,
+)
 
 background.unload_models()
 upscale.unload_models()
@@ -372,10 +418,12 @@ vanguard.unload_models()
 ocr.unload_models()
 fontid.unload_models()
 sonara.unload_models()
+imageprompt.unload_models()
 check("unload functions run", True)
 check("ocr engines cleared", not ocr._ENGINES)
 check("fontid session cleared", fontid._SESSION is None and fontid._CONFIG is None)
 check("sonara model cleared", sonara._MODEL is None)
+check("imageprompt model cleared", imageprompt._MODEL is None)
 
 # ---- 9. youtube validation paths ---------------------------------------------
 print("\n[9] youtube validation (no network)")

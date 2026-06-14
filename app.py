@@ -60,6 +60,12 @@ from bud3eij.vanguard import (  # noqa: F401
 )
 from bud3eij.ocr import DEFAULT_OCR_TIER, OCR_MODELS, extract_text  # noqa: F401
 from bud3eij.fontid import identify_font  # noqa: F401
+from bud3eij.imageprompt import (  # noqa: F401
+    DEFAULT_PROMPT_MODE,
+    PROMPT_MODES,
+    image_to_prompt,
+)
+from bud3eij.asciiart import image_to_ascii, save_ascii  # noqa: F401
 from bud3eij.sonara import (  # noqa: F401
     AUDIO_EXTS,
     MODEL_NAME as SONARA_MODEL,
@@ -211,7 +217,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "4.2"
+APP_VERSION = "4.3"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -1723,7 +1729,9 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                 text="Can't unload while a job is running — try again when it finishes.",
                 text_color=WARNING)
             return
-        from bud3eij import background, fontid, ocr, sonara, upscale, vanguard
+        from bud3eij import (
+            background, fontid, imageprompt, ocr, sonara, upscale, vanguard,
+        )
 
         background.unload_models()
         upscale.unload_models()
@@ -1731,6 +1739,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         ocr.unload_models()
         fontid.unload_models()
         sonara.unload_models()
+        imageprompt.unload_models()
         import gc
 
         gc.collect()
@@ -2559,14 +2568,16 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         frame.grid_rowconfigure(2, weight=1)
         self._section_header(
             frame, "Marquee",
-            "Image editing — remove backgrounds or upscale to a crisp resolution.",
+            "Image editing — remove backgrounds, upscale, describe an image, "
+            "or turn it into ASCII art.",
         )
 
         # ---- tool switcher ----
         switch = ctk.CTkFrame(frame, fg_color="transparent")
         switch.grid(row=1, column=0, sticky="w", padx=24, pady=(2, 6))
         self.mq_tool = ctk.CTkSegmentedButton(
-            switch, values=["Background Remover", "Upscaler"],
+            switch,
+            values=["Background Remover", "Upscaler", "Image → Prompt", "ASCII Art"],
             command=self._show_mq_tool,
             selected_color=RED, selected_hover_color=RED_HOVER,
         )
@@ -2581,6 +2592,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.mq_panels = {
             "Background Remover": self._build_mq_bgremover(container),
             "Upscaler": self._build_mq_upscaler(container),
+            "Image → Prompt": self._build_mq_imageprompt(container),
+            "ASCII Art": self._build_mq_ascii(container),
         }
         for p in self.mq_panels.values():
             p.grid(row=0, column=0, sticky="nsew")
@@ -2737,6 +2750,190 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             wraplength=620, justify="left", anchor="w",
         )
         self.up_status.grid(row=3, column=0, sticky="w", padx=24, pady=(4, 16))
+        return panel
+
+    # ---- marquee: image -> prompt panel ---------------------------------- #
+    IP_MODE_BLURB = {
+        "Concise": "A short one- or two-sentence prompt.",
+        "Detailed": "A full prompt: subject, setting, style, lighting, colour & composition.",
+    }
+
+    def _build_mq_imageprompt(self, parent) -> ctk.CTkFrame:
+        panel = ctk.CTkFrame(parent, fg_color="transparent")
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(3, weight=1)  # results row grows
+
+        self.ip_drop_icon = self._ui_icon("type", 46, light=RED, dark=RED_BRIGHT)
+        dz = self._build_drop_zone(
+            panel, row=0, icon=self.ip_drop_icon,
+            title="Drag & drop an image here",
+            hint="or click to browse  ·  JPG · PNG · WEBP · BMP · GIF · TIFF",
+            on_drop=self.on_ip_drop, on_click=self.browse_ip, height=130,
+        )
+        self.ip_drop = dz["zone"]
+        self.ip_icon_label = dz["icon"]
+        self.ip_primary = dz["primary"]
+        self.ip_secondary = dz["secondary"]
+
+        card = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        card.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 10))
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card, text="Describes the image as a detailed text-to-image prompt you "
+                       "could feed back into an image generator — runs fully offline.",
+            text_color=MUTED, anchor="w", justify="left", wraplength=620,
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(12, 4))
+
+        det = ctk.CTkFrame(card, fg_color="transparent")
+        det.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 2))
+        ctk.CTkLabel(det, text="DETAIL", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, padx=(0, 12))
+        self.ip_mode = ctk.CTkSegmentedButton(
+            det, values=list(PROMPT_MODES), command=self._on_ip_mode_change,
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.ip_mode.set(DEFAULT_PROMPT_MODE)
+        self.ip_mode.grid(row=0, column=1)
+        self.ip_mode_caption = ctk.CTkLabel(
+            card, text=self.IP_MODE_BLURB[DEFAULT_PROMPT_MODE], text_color=MUTED,
+            anchor="w", justify="left", wraplength=620,
+        )
+        self.ip_mode_caption.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 6))
+
+        btnrow = ctk.CTkFrame(card, fg_color="transparent")
+        btnrow.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 10))
+        btnrow.grid_columnconfigure(0, weight=1)
+        self.ip_btn = GradientButton(
+            btnrow, text="Describe Image", height=46, icon="type",
+            busy_text="Describing", command=self.on_ip_run, state="disabled",
+        )
+        self.ip_btn.grid(row=0, column=0, sticky="ew")
+        self._clear_button(btnrow, self.reset_imageprompt).grid(row=0, column=1, padx=(10, 0))
+
+        self.ip_progress = ctk.CTkProgressBar(panel, height=8)
+        self.ip_progress.set(0)
+        self.ip_progress.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.ip_progress.grid_remove()  # only while describing
+
+        # ---- results card (hidden until a run finishes) ----
+        self.ip_results = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        self.ip_results.grid(row=3, column=0, sticky="nsew", padx=24, pady=(0, 8))
+        self.ip_results.grid_columnconfigure(0, weight=1)
+        self.ip_results.grid_rowconfigure(1, weight=1)
+        head = ctk.CTkFrame(self.ip_results, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 4))
+        head.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(head, text="Image prompt", font=self._font(14, "semibold"),
+                     anchor="w").grid(row=0, column=0, sticky="w")
+        self.ip_copy_btn = ctk.CTkButton(
+            head, text="Copy to clipboard", width=150, height=32,
+            command=self._ip_copy,
+        )
+        self.ip_copy_btn.grid(row=0, column=1, sticky="e")
+        self.ip_out = ctk.CTkTextbox(self.ip_results, height=180, wrap="word")
+        self.ip_out.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 14))
+        self.ip_out.configure(state="disabled")
+        self.ip_results.grid_remove()
+
+        self.ip_status = ctk.CTkLabel(
+            panel, text="Drop an image to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.ip_status.grid(row=4, column=0, sticky="w", padx=24, pady=(2, 10))
+        return panel
+
+    # ---- marquee: ASCII art panel ---------------------------------------- #
+    ASCII_WIDTHS = ["80", "120", "160", "200"]
+
+    def _build_mq_ascii(self, parent) -> ctk.CTkFrame:
+        panel = ctk.CTkFrame(parent, fg_color="transparent")
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(3, weight=1)  # results row grows
+
+        self.asc_drop_icon = self._ui_icon("sparkles", 46, light=RED, dark=RED_BRIGHT)
+        dz = self._build_drop_zone(
+            panel, row=0, icon=self.asc_drop_icon,
+            title="Drag & drop an image here",
+            hint="or click to browse  ·  JPG · PNG · WEBP · BMP · GIF · TIFF",
+            on_drop=self.on_asc_drop, on_click=self.browse_asc, height=130,
+        )
+        self.asc_drop = dz["zone"]
+        self.asc_icon_label = dz["icon"]
+        self.asc_primary = dz["primary"]
+        self.asc_secondary = dz["secondary"]
+
+        card = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        card.grid(row=1, column=0, sticky="ew", padx=24, pady=(0, 10))
+        card.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card, text="Turns the image into ASCII art — export as a .txt or a "
+                       "rendered .png. Instant and fully offline.",
+            text_color=MUTED, anchor="w", justify="left", wraplength=620,
+        ).grid(row=0, column=0, sticky="ew", padx=18, pady=(12, 4))
+
+        opts = ctk.CTkFrame(card, fg_color="transparent")
+        opts.grid(row=1, column=0, sticky="w", padx=18, pady=(0, 8))
+        ctk.CTkLabel(opts, text="WIDTH", font=self._font(11, "medium"),
+                     text_color=MUTED).grid(row=0, column=0, padx=(0, 12))
+        self.asc_width = ctk.CTkSegmentedButton(
+            opts, values=self.ASCII_WIDTHS,
+            selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.asc_width.set("120")
+        self.asc_width.grid(row=0, column=1)
+        self.asc_invert = ctk.CTkSwitch(opts, text="Invert", onvalue=True,
+                                        offvalue=False)
+        self.asc_invert.grid(row=0, column=2, padx=(18, 0))
+        self.asc_color = ctk.CTkSwitch(opts, text="Colour (PNG)", onvalue=True,
+                                       offvalue=False)
+        self.asc_color.grid(row=0, column=3, padx=(14, 0))
+
+        btnrow = ctk.CTkFrame(card, fg_color="transparent")
+        btnrow.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 10))
+        btnrow.grid_columnconfigure(0, weight=1)
+        self.asc_btn = GradientButton(
+            btnrow, text="Convert to ASCII", height=46, icon="sparkles",
+            busy_text="Converting", command=self.on_asc_run, state="disabled",
+        )
+        self.asc_btn.grid(row=0, column=0, sticky="ew")
+        self._clear_button(btnrow, self.reset_ascii).grid(row=0, column=1, padx=(10, 0))
+
+        self.asc_progress = ctk.CTkProgressBar(panel, height=8)
+        self.asc_progress.set(0)
+        self.asc_progress.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.asc_progress.grid_remove()  # only while converting
+
+        # ---- results card (hidden until a run finishes) ----
+        self.asc_results = ctk.CTkFrame(panel, fg_color=CARD_SOFT, corner_radius=12)
+        self.asc_results.grid(row=3, column=0, sticky="nsew", padx=24, pady=(0, 8))
+        self.asc_results.grid_columnconfigure(0, weight=1)
+        self.asc_results.grid_rowconfigure(1, weight=1)
+        head = ctk.CTkFrame(self.asc_results, fg_color="transparent")
+        head.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 4))
+        head.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(head, text="ASCII preview", font=self._font(14, "semibold"),
+                     anchor="w").grid(row=0, column=0, sticky="w")
+        self.asc_copy_btn = ctk.CTkButton(
+            head, text="Copy", width=80, height=32, command=self._asc_copy,
+        )
+        self.asc_copy_btn.grid(row=0, column=1, sticky="e", padx=(0, 8))
+        self.asc_save_btn = ctk.CTkButton(
+            head, text="Save…", width=90, height=32, command=self.on_asc_save,
+        )
+        self.asc_save_btn.grid(row=0, column=2, sticky="e")
+        self.asc_out = ctk.CTkTextbox(
+            self.asc_results, height=200, wrap="none",
+            font=ctk.CTkFont(family="Consolas", size=8),
+        )
+        self.asc_out.grid(row=1, column=0, sticky="nsew", padx=18, pady=(0, 14))
+        self.asc_out.configure(state="disabled")
+        self.asc_results.grid_remove()
+
+        self.asc_status = ctk.CTkLabel(
+            panel, text="Drop an image to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.asc_status.grid(row=4, column=0, sticky="w", padx=24, pady=(2, 10))
         return panel
 
     # ---- marquee actions ------------------------------------------------- #
@@ -2989,6 +3186,245 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             hint_text="or click to browse  ·  JPG · PNG · WEBP · BMP · GIF · TIFF",
             button=self.up_btn, progress=self.up_progress, status=self.up_status,
             status_text="Drop a low-res image to begin.")
+
+    # ---- marquee: image -> prompt actions -------------------------------- #
+    def _on_ip_mode_change(self, mode: str):
+        self.ip_mode_caption.configure(text=self.IP_MODE_BLURB.get(mode, ""))
+
+    def on_ip_drop(self, event):
+        paths = self._parse_drop(event)
+        if paths:
+            self.set_ip_file(paths[0])
+
+    def browse_ip(self):
+        path = self._ask_open("imageprompt", title="Select an image to describe",
+                              filetypes=self._IMAGE_FILETYPES)
+        if path:
+            self.set_ip_file(Path(path))
+
+    def set_ip_file(self, path: Path):
+        if not path.is_file():
+            self.ip_status.configure(text=self._not_a_file_message(path),
+                                     text_color=WARNING)
+            return
+        self.iprompt_file = self._set_image_file(
+            path, icon_label=self.ip_icon_label, default_icon=self.ip_drop_icon,
+            primary=self.ip_primary, secondary=self.ip_secondary,
+            button=self.ip_btn, status=self.ip_status, detail="Image",
+            ready_text=f"Ready to describe {path.name}",
+        )
+
+    def on_ip_run(self):
+        src = self.iprompt_file
+        if not src:
+            return
+        mode = self.ip_mode.get() or DEFAULT_PROMPT_MODE
+        self._job_started()
+        self.ip_btn.configure(state="disabled")
+        self.ip_btn.start_busy()
+        self.ip_progress.grid()
+        self._fill_start(self.ip_progress)
+        self.ip_status.configure(
+            text="Describing the image… (the first run downloads the model once, "
+                 "then loads it — slower)",
+            text_color=MUTED)
+        threading.Thread(target=self._ip_worker, args=(src, mode),
+                         daemon=True).start()
+
+    def _ip_worker(self, src: Path, mode: str):
+        try:
+            text = image_to_prompt(src, mode=mode)
+            self.after(0, self._ip_done, src, text, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._ip_done, src, None, exc)
+
+    def _ip_done(self, src: Path, text: str | None, error: Exception | None):
+        self._fill_stop(self.ip_progress)
+        self._job_finished()
+        self.ip_progress.grid_remove()
+        self.ip_progress.set(0)
+        self.ip_btn.configure(state="normal")
+        self.ip_btn.stop_busy(success=error is None and bool(text))
+        if error:
+            self.ip_status.configure(text=f"✕  {error}", text_color=ERROR)
+            return
+        if not text:
+            self.ip_results.grid_remove()
+            self.ip_status.configure(
+                text=f"Couldn't describe {src.name} — try another image.",
+                text_color=WARNING)
+            return
+        self.ip_out.configure(state="normal")
+        self.ip_out.delete("1.0", "end")
+        self.ip_out.insert("1.0", text)
+        self.ip_out.configure(state="disabled")
+        self.ip_results.grid()
+        self.ip_status.configure(
+            text=f"✓  Described {src.name} · {len(text):,} characters.",
+            text_color=SUCCESS)
+
+    def _ip_copy(self):
+        text = self.ip_out.get("1.0", "end").rstrip("\n")
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.ip_status.configure(
+            text=f"✓  Copied {len(text):,} characters to the clipboard.",
+            text_color=SUCCESS)
+
+    def reset_imageprompt(self):
+        self.ip_out.configure(state="normal")
+        self.ip_out.delete("1.0", "end")
+        self.ip_out.configure(state="disabled")
+        self._reset_image_tool(
+            file_attr="iprompt_file", icon_label=self.ip_icon_label,
+            drop_icon=self.ip_drop_icon, primary=self.ip_primary,
+            secondary=self.ip_secondary, primary_text="Drag & drop an image here",
+            hint_text="or click to browse  ·  JPG · PNG · WEBP · BMP · GIF · TIFF",
+            button=self.ip_btn, progress=self.ip_progress, results=self.ip_results,
+            status=self.ip_status, status_text="Drop an image to begin.")
+
+    # ---- marquee: ASCII art actions -------------------------------------- #
+    def on_asc_drop(self, event):
+        paths = self._parse_drop(event)
+        if paths:
+            self.set_asc_file(paths[0])
+
+    def browse_asc(self):
+        path = self._ask_open("asciiart", title="Select an image to convert",
+                              filetypes=self._IMAGE_FILETYPES)
+        if path:
+            self.set_asc_file(Path(path))
+
+    def set_asc_file(self, path: Path):
+        if not path.is_file():
+            self.asc_status.configure(text=self._not_a_file_message(path),
+                                      text_color=WARNING)
+            return
+        self.ascii_file = self._set_image_file(
+            path, icon_label=self.asc_icon_label, default_icon=self.asc_drop_icon,
+            primary=self.asc_primary, secondary=self.asc_secondary,
+            button=self.asc_btn, status=self.asc_status, detail="Image",
+            ready_text=f"Ready to convert {path.name} to ASCII",
+        )
+
+    def on_asc_run(self):
+        src = self.ascii_file
+        if not src:
+            return
+        try:
+            width = int(self.asc_width.get() or "120")
+        except ValueError:
+            width = 120
+        invert = bool(self.asc_invert.get())
+        self._asc_opts = {"width": width, "invert": invert}
+        self._job_started()
+        self.asc_btn.configure(state="disabled")
+        self.asc_btn.start_busy()
+        self.asc_progress.grid()
+        self._fill_start(self.asc_progress)
+        self.asc_status.configure(text="Converting to ASCII…", text_color=MUTED)
+        threading.Thread(target=self._asc_worker, args=(src, width, invert),
+                         daemon=True).start()
+
+    def _asc_worker(self, src: Path, width: int, invert: bool):
+        try:
+            text = image_to_ascii(src, width=width, invert=invert)
+            self.after(0, self._asc_done, src, text, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._asc_done, src, None, exc)
+
+    def _asc_done(self, src: Path, text: str | None, error: Exception | None):
+        self._fill_stop(self.asc_progress)
+        self._job_finished()
+        self.asc_progress.grid_remove()
+        self.asc_progress.set(0)
+        self.asc_btn.configure(state="normal")
+        self.asc_btn.stop_busy(success=error is None and bool(text))
+        if error:
+            self.asc_status.configure(text=f"✕  {error}", text_color=ERROR)
+            return
+        self.asc_out.configure(state="normal")
+        self.asc_out.delete("1.0", "end")
+        self.asc_out.insert("1.0", text)
+        self.asc_out.configure(state="disabled")
+        self.asc_results.grid()
+        rows = text.count("\n") + 1
+        self.asc_status.configure(
+            text=f"✓  Converted {src.name} to ASCII ({rows} rows). "
+                 "Save it as .txt or .png.",
+            text_color=SUCCESS)
+
+    def _asc_copy(self):
+        text = self.asc_out.get("1.0", "end").rstrip("\n")
+        if not text:
+            return
+        self.clipboard_clear()
+        self.clipboard_append(text)
+        self.asc_status.configure(
+            text="✓  Copied the ASCII art to the clipboard.", text_color=SUCCESS)
+
+    def on_asc_save(self):
+        src = self.ascii_file
+        if not src or not getattr(self, "_asc_opts", None):
+            return
+        out = self._ask_save(
+            "ascii_save", title="Save ASCII art as", defaultextension=".txt",
+            initialfile=f"{src.stem}_ascii.txt",
+            filetypes=[("Text file", "*.txt"), ("PNG image", "*.png")],
+        )
+        if not out:
+            return
+        opts = dict(self._asc_opts)
+        color = bool(self.asc_color.get())
+        self._job_started()
+        self.asc_save_btn.configure(state="disabled")
+        self.asc_status.configure(text="Saving…", text_color=MUTED)
+        threading.Thread(
+            target=self._asc_save_worker,
+            args=(src, Path(out), opts["width"], opts["invert"], color),
+            daemon=True).start()
+
+    def _asc_save_worker(self, src: Path, out: Path, width: int, invert: bool,
+                         color: bool):
+        try:
+            # overwrite=True: the save dialog already confirmed replacing `out`.
+            result = save_ascii(src, out, width=width, invert=invert, color=color,
+                                overwrite=True)
+            self.after(0, self._asc_save_done, src, result, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._asc_save_done, src, None, exc)
+
+    def _asc_save_done(self, src: Path, out: Path | None, error: Exception | None):
+        self._job_finished()
+        self.asc_save_btn.configure(state="normal")
+        if error:
+            self.asc_status.configure(text=f"✕  {error}", text_color=ERROR)
+            self.add_history(src, None, False, str(error))
+            return
+        self.asc_status.configure(text=f"✓  Saved to {out}", text_color=SUCCESS)
+        self.add_history(src, out, True)
+
+    def reset_ascii(self):
+        self.asc_out.configure(state="normal")
+        self.asc_out.delete("1.0", "end")
+        self.asc_out.configure(state="disabled")
+        self.asc_width.set("120")
+        self.asc_invert.deselect()
+        self.asc_color.deselect()
+        self._asc_opts = None
+        self._reset_image_tool(
+            file_attr="ascii_file", icon_label=self.asc_icon_label,
+            drop_icon=self.asc_drop_icon, primary=self.asc_primary,
+            secondary=self.asc_secondary, primary_text="Drag & drop an image here",
+            hint_text="or click to browse  ·  JPG · PNG · WEBP · BMP · GIF · TIFF",
+            button=self.asc_btn, progress=self.asc_progress,
+            results=self.asc_results, status=self.asc_status,
+            status_text="Drop an image to begin.")
 
     # ===================================================================== #
     # Vanguard — AI text tools (detector / text extraction / font ID)
@@ -5056,6 +5492,16 @@ def _run_cli(args) -> int:
         help="Convert a date/time between zones, e.g. "
              "--convert-tz \"2026-06-13 14:30\" Asia/Dubai America/New_York.",
     )
+    parser.add_argument(
+        "--image-prompt", nargs="+", metavar="FILE [MODE]",
+        help="Describe an image as a text-to-image prompt (MODE: Concise/Detailed, "
+             "default Detailed), print it, and exit.",
+    )
+    parser.add_argument(
+        "--ascii", nargs="+", metavar="FILE [WIDTH]",
+        help="Convert an image to ASCII art (WIDTH columns, default 120), "
+             "print it, and exit.",
+    )
     ns = parser.parse_args(args)
     if ns.convert:
         src, target = ns.convert
@@ -5194,6 +5640,35 @@ def _run_cli(args) -> int:
         try:
             out = convert_timezone(parse_datetime(dt_text), src, dst)
             print(f"{dst}: {out:%Y-%m-%d %H:%M} ({tz_offset_str(out)})")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.image_prompt:
+        if len(ns.image_prompt) > 2:
+            parser.error("--image-prompt takes FILE and an optional MODE "
+                         "(Concise/Detailed)")
+        src = ns.image_prompt[0]
+        mode = (ns.image_prompt[1].title() if len(ns.image_prompt) > 1
+                else DEFAULT_PROMPT_MODE)
+        if mode not in PROMPT_MODES:
+            parser.error(f"unknown mode '{mode}' — use one of: {', '.join(PROMPT_MODES)}")
+        try:
+            print(image_to_prompt(src, mode=mode))
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.ascii:
+        if len(ns.ascii) > 2:
+            parser.error("--ascii takes FILE and an optional WIDTH")
+        src = ns.ascii[0]
+        try:
+            width = int(ns.ascii[1]) if len(ns.ascii) > 1 else 120
+        except ValueError:
+            parser.error("WIDTH must be a whole number")
+        try:
+            print(image_to_ascii(src, width=width))
             return 0
         except Exception as exc:  # noqa: BLE001
             print(f"Error: {exc}", file=sys.stderr)

@@ -15,8 +15,11 @@ saved right next to the original.
 - **YouTube** tab: paste a link and download it as MP4 (video) or MP3 (audio)
 - **Marquee** tab (image editing): **Background Remover** (transparent PNG, three
   quality tiers — the Omega tier runs BiRefNet-HR on the GPU for hair-strand
-  precision) and **Image Upscaler** (UltraSharp V2 on the GPU, to exact
-  1080p / 2K / 4K)
+  precision), **Image Upscaler** (UltraSharp V2 on the GPU, to exact
+  1080p / 2K / 4K), **Image → Prompt** (describe any image as a detailed
+  text-to-image prompt — Qwen2-VL on the GPU, fully offline, copy to clipboard)
+  and **ASCII Art** (turn an image into ASCII, with adjustable width, invert and
+  colour, exported as `.txt` or a rendered `.png`)
 - **Vanguard** tab (AI text tools): **AI Text Detector** (estimate how likely a
   text is AI-generated, with flagged passages), **Text Extraction** (offline OCR
   of any screenshot/photo, with copy-to-clipboard), and **What's The Font**
@@ -116,6 +119,8 @@ python app.py --convert "C:\path\to\photo.png" jpg
 python app.py --download "https://www.youtube.com/watch?v=…" mp3   # saves to the current folder
 python app.py --remove-bg "C:\path\photo.png"        # transparent PNG next to the source
 python app.py --upscale "C:\path\small.png" 2K       # 1080p / 2K / 4K
+python app.py --image-prompt "C:\path\photo.png"     # describe as a text-to-image prompt (Concise/Detailed)
+python app.py --ascii "C:\path\photo.png" 120        # image -> ASCII art (width in columns)
 python app.py --detect "C:\path\essay.docx"          # AI-likelihood estimate
 python app.py --extract-text "C:\path\shot.png" Max  # OCR (Fast/Max): prints the text
 python app.py --identify-font "C:\path\text.png"     # top-5 Google Font matches
@@ -215,6 +220,13 @@ The **Recent** tab lists past conversions (stored in
   on CPU it works but takes ~15–25 minutes per song. The Demucs model
   (~320 MB) downloads once on first use. Stem playback mixes in real time —
   mute/solo/volume changes are heard instantly.
+- **Image → Prompt** describes any image as a detailed text-to-image prompt
+  using **Qwen2-VL-2B** running on your GPU — fully offline, no account. The
+  model (~4.4 GB) downloads once on first use; pick **Concise** for a one-liner
+  or **Detailed** for a full prompt (subject, style, lighting, colour,
+  composition), then copy it to the clipboard. **ASCII Art** is instant and
+  offline (no model): choose the output width, optionally invert or colour it,
+  and export `.txt` or a rendered `.png`.
 - **Nexus** is fully offline and key-less. The **currency** converter ships with
   a bundled ECB rate snapshot so it works on a brand-new machine; **Refresh**
   fetches today's rates from the open Frankfurter endpoint (a failed refresh

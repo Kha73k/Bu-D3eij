@@ -9,6 +9,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+try:  # the "Image → Prompt" label has a non-cp1252 char; keep prints safe
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:  # noqa: BLE001
+    pass
+
 import app  # noqa: E402
 
 PASS, FAIL = 0, 0
@@ -173,6 +178,36 @@ check("ocr tier caption updates",
       "English" in a.vgo_model_caption.cget("text"))
 check("font has 5 result rows", len(a.vgf_rows) == 5)
 
+# v4.3: Marquee is a 4-tool page (BG Remover / Upscaler / Image → Prompt / ASCII)
+a.show_frame("Marquee")
+a.update()
+check("mq_tool has 4 tools",
+      set(a.mq_panels) == {"Background Remover", "Upscaler", "Image → Prompt",
+                           "ASCII Art"}, str(set(a.mq_panels)))
+a._show_mq_tool("Image → Prompt")
+a.update()
+check("image-prompt panel shown",
+      a.mq_panels["Image → Prompt"].winfo_manager() == "grid")
+check("bg-remover panel hidden",
+      a.mq_panels["Background Remover"].winfo_manager() == "")
+check("image-prompt DETAIL selector",
+      hasattr(a, "ip_mode") and a.ip_mode.get() == app.DEFAULT_PROMPT_MODE)
+a._on_ip_mode_change("Concise")
+check("image-prompt mode caption updates",
+      "short" in a.ip_mode_caption.cget("text").lower())
+check("image-prompt copy button + read-only output",
+      hasattr(a, "ip_copy_btn") and str(a.ip_out._textbox.cget("state")) == "disabled")
+a._show_mq_tool("ASCII Art")
+a.update()
+check("ascii panel shown", a.mq_panels["ASCII Art"].winfo_manager() == "grid")
+check("ascii WIDTH selector", hasattr(a, "asc_width") and a.asc_width.get() == "120")
+check("ascii invert + colour switches",
+      hasattr(a, "asc_invert") and hasattr(a, "asc_color"))
+check("ascii copy + save buttons",
+      hasattr(a, "asc_copy_btn") and hasattr(a, "asc_save_btn"))
+a._show_mq_tool("Background Remover")
+a.update()
+
 # v4.0: Sonara page — stem rows, hidden player card, stub-player toggles
 import numpy as np  # noqa: E402
 
@@ -310,6 +345,25 @@ a.mq_btn.configure(state="normal")
 a.reset_marquee()
 check("marquee reset disables run + clears file",
       a.marquee_file is None and not a.mq_btn._enabled)
+a._show_mq_tool("Image → Prompt")
+a.update()
+a.iprompt_file = Path("x.png")
+a.ip_btn.configure(state="normal")
+a.ip_results.grid()
+a.reset_imageprompt()
+check("image-prompt reset clears file + hides results",
+      a.iprompt_file is None and not a.ip_btn._enabled
+      and a.ip_results.winfo_manager() == "")
+a._show_mq_tool("ASCII Art")
+a.update()
+a.ascii_file = Path("x.png")
+a.asc_btn.configure(state="normal")
+a.asc_results.grid()
+a.asc_invert.select()
+a.reset_ascii()
+check("ascii reset clears file + options + hides results",
+      a.ascii_file is None and not a.asc_btn._enabled
+      and not a.asc_invert.get() and a.asc_results.winfo_manager() == "")
 a.show_frame("Vanguard")
 a.update()
 a.vg_font_file = Path("x.png")
@@ -332,11 +386,13 @@ a.reset_nxq()
 check("qr reset clears fields + options",
       a.nxq_fields["Wi-Fi"]["ssid"].get() == "" and int(a.nxq_scale.get()) == 10)
 
-# v3.1.5/v3.2/v4.0/v4.2: all nine action buttons share the animated GradientButton design
+# v3.1.5..v4.3: all eleven action buttons share the animated GradientButton design
 for name, btn, busy in [("convert", a.convert_btn, "Converting"),
                         ("youtube", a.yt_btn, "Downloading"),
                         ("bg-remover", a.mq_btn, "Removing"),
                         ("upscaler", a.up_btn, "Upscaling"),
+                        ("image-prompt", a.ip_btn, "Describing"),
+                        ("ascii", a.asc_btn, "Converting"),
                         ("vanguard", a.vg_btn, "Detecting"),
                         ("vg-ocr", a.vgo_btn, "Extracting"),
                         ("vg-font", a.vgf_btn, "Identifying"),
