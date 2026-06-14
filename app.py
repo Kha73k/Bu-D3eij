@@ -240,7 +240,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "4.3.1"
+APP_VERSION = "4.3.2"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -1005,6 +1005,9 @@ class ScrollArea(ctk.CTkFrame):
         self._win = self._canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self._sync_after = None   # coalesces the heavier sync to one call per idle
         self._overflow = False    # last known "content taller than viewport" state
+        self._width_after = None  # throttles the width-driven page reflow on resize
+        self._pending_w = None
+        self._applied_w = -1
         self._canvas.bind("<Configure>", self._on_canvas)
         self.inner.bind("<Configure>", lambda _e: self._schedule_sync())
         # bind_all so the wheel works wherever the pointer is over a page; the
@@ -1018,15 +1021,49 @@ class ScrollArea(ctk.CTkFrame):
     def refresh_bg(self):
         self._canvas.configure(bg=self._bg())
 
+    _RESIZE_MS = 120  # apply the new width this long after a resize drag settles
+
     def _on_canvas(self, event):
-        # The embedded window's WIDTH must track the canvas immediately so the
-        # page fills horizontally as the window resizes. The heavier part —
-        # measuring content height, resizing the scrollregion, showing/hiding
-        # the scrollbar — is coalesced to one call per idle so a fast resize
-        # drag doesn't recompute it on every single pixel (that churn was ~24 ms
-        # per resize step with all pages built).
-        self._canvas.itemconfigure(self._win, width=event.width)
+        # Setting the embedded window's WIDTH forces a full CTk relayout of the
+        # visible page — ~25-45 ms on heavy pages (Marquee/Nexus) vs near-zero on
+        # light ones, which is exactly why resizing felt slow only on busy tabs.
+        # So **fully defer** that reflow: do NOT touch the width while the drag is
+        # live (these handler calls stay microsecond-cheap, so the <Configure>
+        # stream isn't spaced out and the settle timer can't fire mid-drag), and
+        # apply the final width once the drag settles (no <Configure> for
+        # _RESIZE_MS). A busy tab now resizes as smoothly as an empty one (the
+        # window frame stays fluid via per-monitor-v2 DPI); the content snaps to
+        # the new width ~50 ms after you let go. `_sync` applies any still-pending
+        # width synchronously when it must measure (page switch / tests).
+        self._pending_w = event.width
+        if self._width_after is not None:
+            try:
+                self.after_cancel(self._width_after)
+            except Exception:  # noqa: BLE001
+                pass
+        self._width_after = self.after(self._RESIZE_MS, self._flush_width_timer)
+
+    def _flush_width_timer(self):
+        self._width_after = None
+        if self._pending_w is not None and self._pending_w != self._applied_w:
+            self._flush_width()  # settle: apply the final width once
+
+    def _flush_width(self):
+        self._applied_w = self._pending_w
+        self._canvas.itemconfigure(self._win, width=self._pending_w)
         self._schedule_sync()
+
+    def _apply_pending_width(self):
+        """Apply a debounced resize width right now (inline, no re-sync)."""
+        if self._width_after is not None:
+            try:
+                self.after_cancel(self._width_after)
+            except Exception:  # noqa: BLE001
+                pass
+            self._width_after = None
+        if self._pending_w is not None and self._pending_w != self._applied_w:
+            self._applied_w = self._pending_w
+            self._canvas.itemconfigure(self._win, width=self._pending_w)
 
     def _schedule_sync(self):
         if self._sync_after is None:
@@ -1037,6 +1074,9 @@ class ScrollArea(ctk.CTkFrame):
         self._sync()
 
     def _sync(self, canvas_h: int | None = None):
+        # If a resize width is still pending (debounced), apply it now so the
+        # height we measure matches the page's real width (text re-wraps with it).
+        self._apply_pending_width()
         if canvas_h is None:
             canvas_h = self._canvas.winfo_height()
         content_h = self.inner.winfo_reqheight()

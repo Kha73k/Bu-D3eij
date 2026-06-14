@@ -2,9 +2,9 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-14 (Marquee Image → Prompt + ASCII Art; DPI drag fix)_
+_Last updated: 2026-06-14 (Marquee Image → Prompt + ASCII Art; DPI drag fix; debounced resize)_
 
-## Status: working app — v4.3.1 (Marquee Image → Prompt + ASCII Art; smooth-drag DPI fix; exe rebuilt)
+## Status: working app — v4.3.2 (Marquee Image → Prompt + ASCII Art; smooth-drag DPI fix; debounced resize; exe rebuilt)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
@@ -30,6 +30,26 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.
 
 ## Completed
+
+### 2026-06-14 — Debounced resize reflow (v4.3.2)
+Follow-up to the drag fix: window **resize** was sluggish on content-heavy tabs
+(Marquee/Nexus) but fine on empty ones. **Profiled** (`cProfile` over a simulated
+resize sweep): each width change drives **~500 Tcl draw calls / ~50 ms** of
+CustomTkinter re-rendering (rounded-rect cards via `draw_engine`/`ctk_canvas`) —
+an architecture cost, not Python-tunable. Doing that per resize-pixel (the
+`ScrollArea._on_canvas` `itemconfigure(width)`) was the lag. **Fix:** `_on_canvas`
+**fully defers** the width apply — during the drag it only records `_pending_w` +
+resets a timer (cheap, so the `<Configure>` stream stays dense and the timer
+can't fire mid-drag), applying the final width **once `_RESIZE_MS`=120 ms after
+the drag settles** (`_flush_width_timer`/`_flush_width`); `_sync` calls
+`_apply_pending_width()` first so page switches/tests still measure the real
+width. Iterated with the user: a leading-edge apply (one reflow per burst) and
+short settles (50 ms) both reintroduced mid-drag jank — the 40 ms reflow block
+spaced out the event stream so the timer fired during the drag; removing the
+leading apply + a 120 ms settle is smooth. This is an explicit **smooth-drag vs
+live-content** trade (the ~50 ms reflow makes both impossible on busy tabs);
+**user chose smooth drag + snap-on-release.** Verified: GUI smoke 109/0;
+user-confirmed smooth in source. Pairs with the PMv2 drag fix below.
 
 ### 2026-06-14 — Smooth window drag in the .exe via per-monitor-v2 DPI (v4.3.1)
 User report: window dragging laggy **in the rebuilt .exe** (all tabs, move +

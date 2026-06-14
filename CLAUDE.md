@@ -764,8 +764,27 @@ still apply; only the file a function lives in changed.
   manifest awareness, but the PyInstaller exe has none, so it would otherwise sit
   at CTk's v1. No visual change at 100 % scaling. (The 2026-06-13 GradientButton
   drag-suspend is still needed/kept — it stops the button repainting during a
-  drag; this is the *separate* OS-level half.) Resize is still relatively slow
-  (the ScrollArea reflows the page per pixel — see `_on_canvas`); not yet tuned.
+  drag; this is the *separate* OS-level half.)
+- **Debounced resize reflow (`ScrollArea`, v4.3.2):** setting the embedded
+  window's WIDTH (`itemconfigure(self._win, width=…)`) forces a full CustomTkinter
+  relayout of the visible page — profiled at **~500 Tcl draw calls / ~50 ms per
+  frame on heavy pages** (Marquee/Nexus; near-zero on light ones — it's CTk
+  re-rendering each card's rounded-rect via `draw_engine`/`ctk_canvas`, an
+  architecture cost, not something Python-tunable). Doing it per resize pixel was
+  the resize lag. So `_on_canvas` now **fully defers** the width apply: while the
+  drag is live it only records `_pending_w` + resets a timer (microsecond-cheap,
+  so the `<Configure>` stream stays dense and the timer can't fire mid-drag),
+  applying the width **once `_RESIZE_MS` (120 ms) after the drag settles**
+  (`_flush_width_timer` → `_flush_width`). The window frame stays fluid (PMv2);
+  the content **snaps** to the new width on release. **No leading-edge apply** —
+  an earlier version did one reflow per burst, but that 40 ms block spaced out
+  the event stream enough that a short timer fired mid-drag → jank; removing it
+  let the settle time alone govern smoothness. `_sync` calls
+  **`_apply_pending_width()`** first so a page switch (`to_top`) / the GUI test
+  measure the page at its real width even with an apply still pending. This is a
+  deliberate **smooth-drag-vs-live-content trade** (user chose smooth; the ~50 ms
+  CTk reflow makes "both" impossible on busy tabs). Height/scrollbar `_sync`
+  stays coalesced via `after_idle`.
 - **Visible-page-only theme toggle (perf, 2026-06-14):** `ctk.set_appearance_mode`
   redraws *every* registered CTk widget — **including the ones on hidden pages** —
   so lazy building (above) only keeps the toggle cheap until you've actually opened

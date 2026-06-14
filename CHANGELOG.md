@@ -5,6 +5,19 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v4.3.2 — 2026-06-14
+
+### Fixed
+- **Resizing the window is smooth on every tab now**, including content-heavy
+  ones (Marquee, Nexus). Those pages were doing a full ~50 ms re-layout on every
+  resize pixel; the page now re-flows to the new width **once, the moment you let
+  go of the edge**, so dragging the edge stays fluid (the content snaps to fit on
+  release). Light tabs are unchanged. (Live content re-flow during the drag isn't
+  feasible without the per-frame redraw cost that caused the lag — this keeps the
+  drag itself smooth.)
+
+---
+
 ## v4.3.1 — 2026-06-14
 
 ### Fixed
