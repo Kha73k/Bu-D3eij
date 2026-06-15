@@ -31,6 +31,22 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 
 ## Completed
 
+### 2026-06-15 — Public-launch prep: fix standalone-Python SSL (truststore)
+VM (Windows Sandbox) testing surfaced a launch-blocker: in the installed app every
+on-demand download failed with `[SSL: CERTIFICATE_VERIFY_FAILED] unable to get
+local issuer certificate`. Root cause: the relocatable **standalone Python**
+(python-build-standalone) ships **no CA certificate bundle**, and Python's `ssl`
+reads only a static snapshot of the Windows cert store — which a fresh machine may
+not have populated (Windows fills roots on demand). This broke **every urllib-based
+download**: ffmpeg AND the Vanguard/font/upscale models AND torch.hub/Demucs (the
+huggingface_hub paths worked because they bundle certifi). **Fix:** added
+**`truststore`** to `requirements/base.txt` and call `truststore.inject_into_ssl()`
+in `bud3eij/__init__.py` (try/except → no-op on a normal CPython) — routes all SSL
+verification through the live OS trust store (Windows SChannel), like a browser.
+Verified the injection takes effect (`ssl.create_default_context()` → a `truststore`
+context) and the app imports clean; user to re-verify in the Sandbox after a
+rebuild. Masked on the dev host, which has ambient CA certs the clean VM lacks.
+
 ### 2026-06-15 — Public-launch prep, Phase 2 start (feature-selective installer)
 Began the installer (tracked in `PHASES.md`). Base Python decided:
 **python-build-standalone** (relocatable, ships tkinter + pip — the Windows

@@ -59,6 +59,14 @@ inline below.
   ~109 MB) into `~/.bud3eij/ffmpeg/` on first A/V use and prepends it to PATH;
   `convert_av`/`download_youtube`/`_load_audio` call it (Sonara best-effort, with
   the torchaudio fallback). Not bundled/re-distributed.
+  **SSL (launch prep, 2026-06-15):** the relocatable standalone Python (installer)
+  ships **no CA bundle**, and Python's `ssl` reads only a static Windows-cert-store
+  snapshot — so on a clean machine every **urllib/torch.hub** download fails with
+  `CERTIFICATE_VERIFY_FAILED` (ffmpeg + Vanguard/font/upscale models + Demucs; the
+  huggingface_hub paths survive via bundled certifi). Fix: `truststore` (in
+  `base.txt`) + `truststore.inject_into_ssl()` in `bud3eij/__init__.py` routes SSL
+  through the live OS trust store. Masked on dev hosts that have ambient certs;
+  only a pristine VM/Sandbox reveals it.
 - **Microsoft Word is installed**, so DOCX→PDF uses a high-fidelity **direct
   Word-COM** path (`_docx_to_pdf_word`; docx2pdf was dropped in v3.1 — it leaked
   a hidden WINWORD.EXE on every failed conversion); `reportlab` is the

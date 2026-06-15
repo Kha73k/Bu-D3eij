@@ -51,7 +51,7 @@ from its author's own repository (Hugging Face / torch.hub) on first use.
 
 Permissive (MIT / BSD / Apache-2.0 / PSF / Unlicense / HPND):
 
-- customtkinter (MIT), tkinterdnd2 (MIT), Pillow (HPND / MIT-CMU)
+- customtkinter (MIT), tkinterdnd2 (MIT), Pillow (HPND / MIT-CMU), truststore (MIT)
 - python-docx (MIT), python-pptx (MIT), pdfplumber (MIT), markdownify (MIT)
 - reportlab (BSD-3-Clause), mammoth (BSD-2-Clause), numpy (BSD-3-Clause)
 - pint (BSD-3-Clause), qrcode (BSD-3-Clause)

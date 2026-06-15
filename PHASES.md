@@ -67,6 +67,8 @@ Installer where users pick features; auto-configures.
 - [x] Cold-start tested in **Windows Sandbox**: install works, only chosen sections
   appear (feature-gating), on-demand AI model downloads + works (Core + Vanguard)
 - [x] ffmpeg handling → on-demand download (`bud3eij/ffmpeg.py`); no manual install
+- [x] Fix standalone-Python SSL (ships no CA bundle) → `truststore` OS trust store
+  in `bud3eij/__init__.py`; was breaking ALL urllib downloads (found in VM test)
 - [ ] Confirm a torch feature (Marquee/Sonara) install path on a VM
 - Depends on: Phase 1. (ML model weights download on demand; UI feature-gating
   done in Phase 1.)
