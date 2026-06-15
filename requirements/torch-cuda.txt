@@ -1,0 +1,7 @@
+# PyTorch — CUDA 12.6 build (OPTIONAL; NVIDIA GPU). Much faster for the Marquee
+# AI tools and Sonara (seconds vs. minutes). Adds several GB over the CPU build.
+# Install this BEFORE the feature groups so demucs/spandrel resolve against it.
+--index-url https://download.pytorch.org/whl/cu126
+torch
+torchaudio
+torchvision

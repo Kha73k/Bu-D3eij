@@ -1,32 +1,17 @@
-customtkinter>=5.2.2
-tkinterdnd2>=0.4.2
-Pillow>=11.0.0
-python-docx>=1.1.2
-pdfplumber>=0.11.4
-reportlab>=4.2.0
-ffmpeg-python>=0.2.0
-pdf2docx>=0.5.8
-python-pptx>=1.0.2
-pymupdf4llm>=0.0.17
-mammoth>=1.8.0
-markdownify>=0.13.1
-yt-dlp>=2025.1.1
-rembg>=2.0.50
-numpy>=1.26
-onnxruntime>=1.16
-tokenizers>=0.15
-rapidocr>=3.0
-demucs==4.0.1
-sounddevice>=0.5
-spandrel>=0.4
-transformers>=5.0
-timm>=1.0
-kornia>=0.8
-pint>=0.23          ; Nexus unit converter
-tzdata>=2024.1      ; Nexus time-zone converter (no system tz db on Windows)
-qrcode[pil]>=7.4    ; Nexus QR-code generator (stdlib urllib handles rate fetch)
-# torch/torchaudio are installed separately with the CUDA index (see CLAUDE.md):
-#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
-# A plain `pip install -r requirements.txt` resolves demucs against the CPU
-# torch wheel instead — works, but stem splitting is ~20x slower.
-pywin32>=306 ; platform_system == "Windows"
+# ---------------------------------------------------------------------------
+# Bu D3eij — DEV "everything" install (all features).
+#
+# The feature-selective installer composes per-feature subsets from requirements/
+# instead of using this file — see requirements/README.md and docs/DISTRIBUTION.md.
+#
+# PyTorch is installed from the PyTorch index (NOT plain PyPI). Install ONE torch
+# group FIRST, so demucs/spandrel resolve against it:
+#   pip install -r requirements/torch-cpu.txt      # default
+#   pip install -r requirements/torch-cuda.txt     # NVIDIA GPU (cu126)
+# Then this file:
+#   pip install -r requirements.txt
+# ---------------------------------------------------------------------------
+-r requirements/base.txt
+-r requirements/marquee.txt
+-r requirements/vanguard.txt
+-r requirements/sonara.txt

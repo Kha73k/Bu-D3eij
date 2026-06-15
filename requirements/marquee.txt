@@ -1,0 +1,12 @@
+# Marquee — image tools (Background Remover, Upscaler, Image → Prompt, ASCII Art).
+# Background Remover Flash/Mid use rembg+onnxruntime (no torch); Upscaler,
+# BiRefNet "Omega", and Image → Prompt need PyTorch.
+#
+# ALSO install a torch group (CPU default / CUDA optional):
+#   pip install -r requirements/torch-cpu.txt      (or torch-cuda.txt)
+rembg>=2.0.50
+onnxruntime>=1.16
+spandrel>=0.4
+transformers>=5.0
+timm>=1.0
+kornia>=0.8

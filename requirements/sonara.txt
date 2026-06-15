@@ -1,0 +1,7 @@
+# Sonara — audio Stem Splitter (Demucs htdemucs_ft) + real-time mixer.
+# Needs PyTorch (torch + torchaudio).
+#
+# ALSO install a torch group (CPU default / CUDA optional):
+#   pip install -r requirements/torch-cpu.txt      (or torch-cuda.txt)
+demucs==4.0.1
+sounddevice>=0.5

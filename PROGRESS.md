@@ -31,6 +31,27 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 
 ## Completed
 
+### 2026-06-15 — Public-launch prep, Phase 1 start (distribution foundation)
+Architecture + dependency contract for the public build (tracked in `PHASES.md`).
+- **Decided:** packaging = a **feature-selective installer that builds a managed
+  Python env** (embedded Python + pip-installs the chosen feature groups), not a
+  monolithic PyInstaller exe — fits the on-demand + CPU-default + feature-select
+  goals. Blueprint in **`docs/DISTRIBUTION.md`**.
+- **Decided:** keep **PyMuPDF** (AGPL-3.0) — accept AGPL on the distributed env
+  (MIT source + public repo satisfies it); no code change.
+- **`requirements/` split** (the feature→dep contract the installer composes):
+  `base.txt` (Core: Converter/Nexus/YouTube/ASCII — no torch), `marquee.txt`
+  (rembg/onnxruntime/spandrel/transformers/timm/kornia + torch), `vanguard.txt`
+  (onnxruntime/tokenizers/rapidocr/PyYAML — no torch), `sonara.txt`
+  (demucs/sounddevice + torch), and `torch-cpu.txt`/`torch-cuda.txt`
+  (`--index-url` pinned). Root `requirements.txt` now composes them via `-r`
+  (dev "everything" install unchanged). Verified the graph resolves to 29
+  packages = all 28 originals + explicit `PyYAML` (was transitive). Mapping
+  cross-checked against the actual lazy imports in each `bud3eij/` module.
+- **Next in Phase 1:** UI feature-gating (hide a page when its group isn't
+  installed), the embedded-Python + pip-bootstrap implementation, torch pinning,
+  and a GitHub Releases pipeline.
+
 ### 2026-06-15 — Public-launch prep, Phase 0 (repo readiness)
 First phase of the GitHub public-launch roadmap (see `project-launch-plan.md` on
 the Desktop). Decisions locked with the user: on-demand model delivery, CPU

@@ -1,0 +1,8 @@
+# PyTorch — CPU build (DEFAULT). Required by the Marquee AI tools and Sonara.
+# Installed from the PyTorch index, not plain PyPI. Install this BEFORE the
+# feature groups so demucs/spandrel resolve against it (a plain PyPI resolve
+# would also land the CPU wheel, but pinning the index keeps it deterministic).
+--index-url https://download.pytorch.org/whl/cpu
+torch
+torchaudio
+torchvision

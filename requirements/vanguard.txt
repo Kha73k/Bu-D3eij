@@ -1,0 +1,6 @@
+# Vanguard — text/image AI on onnxruntime (NO torch).
+# AI Text Detector + Text Extraction (OCR) + What's The Font.
+onnxruntime>=1.16
+tokenizers>=0.15      # AI Text Detector tokeniser
+rapidocr>=3.0         # Text Extraction (OCR)
+PyYAML>=6.0           # What's The Font reads model_config.yaml (also pulled by rapidocr)
