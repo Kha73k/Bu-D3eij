@@ -54,7 +54,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 ; The staged folder (installer\build\) holds the standalone Python + all app source.
 ; Shipping all source is cheap; the feature selection only changes which pip packages
 ; bootstrap.py installs. (Run installer\build.ps1 first.)
-Source: "build\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "build\*"; DestDir: "{app}"; Excludes: "_cache\*"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\app.py"""; WorkingDir: "{app}"; IconFilename: "{app}\AppLogo.ico"

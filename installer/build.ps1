@@ -21,8 +21,8 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$PyVersion = "3.11.9",
-  [string]$PyRelease = "20240814",   # python-build-standalone release tag - VERIFY/UPDATE
+  [string]$PyVersion = "3.11.15",
+  [string]$PyRelease = "20260610",   # python-build-standalone release tag (verified asset exists)
   [switch]$SkipPython
 )
 $ErrorActionPreference = "Stop"

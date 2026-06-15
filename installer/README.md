@@ -17,7 +17,7 @@ unpacked anywhere — exactly what an installer-built env needs.
 | File | Role | Status |
 |------|------|--------|
 | `bootstrap.py` | Feature → pip plan; installs Core + selected groups + CPU/CUDA torch into the target Python. Also `--detect-gpu`. | ✅ done + tested |
-| `build.ps1` | Staging: downloads the standalone Python + copies the app source into `build/` (the Inno Setup input). | ✍️ written, unverified |
+| `build.ps1` | Staging: downloads the standalone Python + copies the app source into `build/` (the Inno Setup input). | ✅ verified (Py 3.11.15 + tkinter + pip) |
 | `bud3eij.iss` | Inno Setup script: component UI, CPU/CUDA page (GPU-detected default), copy Python + app source, run bootstrap, create the shortcut. | ✍️ written, unverified |
 | Launcher | The shortcut runs `{app}\python\pythonw.exe {app}\app.py` directly (no console window) — created by the `.iss`; no separate file. | ✅ in the `.iss` |
 
