@@ -77,12 +77,14 @@ Installer where users pick features; auto-configures.
 - Depends on: Phase 1. (ML model weights download on demand; UI feature-gating
   done in Phase 1.)
 
-### Phase 3 — Marketing website ⬜ TODO (parallelizable after Phase 1)
-Discover → motivate → download.
-- [ ] Landing: hero, value prop, per-section showcase, system reqs, FAQ/privacy
-- [ ] Lead with "100% local · no accounts · no limits"
-- [ ] Download CTA → installer (wire after Phase 2)
-- [ ] Host (GitHub Pages / Vercel)
+### Phase 3 — Marketing website ⏳ PLANNING ([docs/WEBSITE_PLAN.md](docs/WEBSITE_PLAN.md))
+Discover → motivate → download. Decided: plain **HTML + Tailwind**, **match the app
+theme** (dark + red + Inter), **landing + changelog**, hosted free on **GitHub Pages**.
+- [x] Plan + hosting + stack + theme decided (`docs/WEBSITE_PLAN.md`)
+- [ ] Capture screenshots/GIFs from the app
+- [ ] Design mockup (hero + a feature block), folding in the user's Tailwind UI ideas
+- [ ] Build landing + changelog (HTML/Tailwind, brand tokens)
+- [ ] Deploy: GitHub Pages Action; wire Download CTA → GitHub Release
 
 ### Phase 4 — Polish & launch ⬜ TODO
 - [ ] End-to-end test on a clean Windows box (no Python / CUDA / model cache)
@@ -96,3 +98,8 @@ Discover → motivate → download.
   on the binary (keep PyMuPDF). Added `docs/DISTRIBUTION.md` + the `requirements/`
   feature split (base/marquee/vanguard/sonara + torch-cpu/cuda); pushed
   `launch-prep` to GitHub.
+- **2026-06-15** — Phase 2 built + validated cold in Windows Sandbox; fixed two
+  clean-machine gaps it surfaced (truststore SSL, bundled VC++ runtime) plus
+  on-demand ffmpeg. Phase 3 website decided: plain HTML + Tailwind, match the app
+  theme (dark + red + Inter), landing + changelog, free on GitHub Pages — plan in
+  `docs/WEBSITE_PLAN.md`.
