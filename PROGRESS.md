@@ -43,8 +43,10 @@ only the C runtime (`vcruntime140`), and a fresh Windows has no VC++ redistribut
 them (`add_dll_directory` is the correct path for 3.8+ extension-module deps — PATH
 is no longer searched for those). Verified the DLLs stage, `bud3eij` imports on the
 standalone python, and onnxruntime still loads in dev. Affects onnxruntime
-everywhere (Vanguard detector/OCR/fontid + Marquee rembg Flash/Mid). User to
-re-verify in the Sandbox.
+everywhere (Vanguard detector/OCR/fontid + Marquee rembg Flash/Mid). **Confirmed
+in the Sandbox (user): no errors** — Core conversions (ffmpeg on-demand) + the
+Vanguard AI Detector (onnxruntime) both work cold. The installer is now validated
+end-to-end on a pristine Windows.
 
 ### 2026-06-15 — Public-launch prep: fix standalone-Python SSL (truststore)
 VM (Windows Sandbox) testing surfaced a launch-blocker: in the installed app every

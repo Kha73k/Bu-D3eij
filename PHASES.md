@@ -65,7 +65,9 @@ Installer where users pick features; auto-configures.
 - [x] Inno Setup `.iss` + `build.ps1` + launcher: **compiles + installs**; the
   Core env imports/launches the app; finish-page "Launch" added (dev-verified)
 - [x] Cold-start tested in **Windows Sandbox**: install works, only chosen sections
-  appear (feature-gating), on-demand AI model downloads + works (Core + Vanguard)
+  appear (feature-gating), on-demand AI model downloads + works (Core + Vanguard).
+  After the SSL + VC++ runtime fixes: ffmpeg on-demand + Vanguard onnxruntime both
+  confirmed cold — **no errors**.
 - [x] ffmpeg handling → on-demand download (`bud3eij/ffmpeg.py`); no manual install
 - [x] Fix standalone-Python SSL (ships no CA bundle) → `truststore` OS trust store
   in `bud3eij/__init__.py`; was breaking ALL urllib downloads (found in VM test)
