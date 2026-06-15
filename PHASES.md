@@ -52,7 +52,7 @@ A reliable, downloadable build + model/dependency delivery.
 - [x] UI feature-gating — `bud3eij/features.py` hides a nav section + Home
   quick-action when its group isn't installed (find_spec sentinels; tested)
 - [ ] Bundle/launch implementation (embedded Python + app source + pip bootstrap)
-- [ ] Pin torch versions for reproducible installs
+- [x] Pin torch versions (2.12.0 / 2.11.0 / 0.27.0; cpu + cu126 wheels verified)
 - [ ] GitHub Releases pipeline (tag → artifact)
 - Depends on: Phase 0. (ML model weights already download on demand in the app.)
 

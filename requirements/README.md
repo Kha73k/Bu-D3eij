@@ -36,5 +36,6 @@ the dev "everything" install.
 - `onnxruntime` appears in both `marquee.txt` and `vanguard.txt`; pip de-duplicates.
 - ML model **weights** are not pip deps — they download on first tool use into
   `~/.bud3eij/models/` (and `~/.u2net/`). The installer only estimates their size.
-- torch is currently unpinned (matches dev). Pin exact versions before the first
-  public release for reproducible installs (Phase 1 hardening).
+- torch is pinned to the tested combo — `torch==2.12.0` / `torchaudio==2.11.0` /
+  `torchvision==0.27.0` (the version numbers resolve to the `+cpu` or `+cu126`
+  build per the index URL; both verified to exist on cp311/win_amd64).
