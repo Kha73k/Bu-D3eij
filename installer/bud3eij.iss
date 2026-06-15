@@ -60,6 +60,10 @@ Source: "build\*"; DestDir: "{app}"; Excludes: "_cache\*"; Flags: recursesubdirs
 Name: "{group}\{#AppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\app.py"""; WorkingDir: "{app}"; IconFilename: "{app}\AppLogo.ico"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\app.py"""; WorkingDir: "{app}"; IconFilename: "{app}\AppLogo.ico"; Tasks: desktopicon
 
+[Run]
+; "Launch Bu D3eij" checkbox on the final wizard page (checked by default).
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\app.py"""; WorkingDir: "{app}"; Description: "Launch {#AppName}"; Flags: postinstall nowait skipifsilent
+
 [Code]
 var
   GpuPage: TInputOptionWizardPage;

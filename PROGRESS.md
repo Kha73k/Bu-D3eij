@@ -54,9 +54,14 @@ Setup component UI over a Python bootstrap.
   this environment. The staging copy logic was exercised (`build.ps1 -SkipPython`
   stages the source); both files are forced ASCII-only (PowerShell 5.1 + ISCC
   misread non-ASCII-without-BOM, which first broke `build.ps1`).
-- **Next (needs your machine):** install Inno Setup, run `build.ps1`, compile the
-  `.iss` → `BuD3eij-Setup.exe`, and test on a clean Windows VM; then the GitHub
-  Releases pipeline.
+- **Compiled + installed (dev machine):** the user compiled the `.iss` (Inno
+  Setup 7) and ran a **Core** install — succeeded; the installed standalone env
+  imports/launches `app.py` cleanly (`%LOCALAPPDATA%\Programs\Bu D3eij`). The pip
+  "yellow" lines were harmless (already-satisfied / scripts-not-on-PATH). Added a
+  finish-page **"Launch Bu D3eij"** checkbox (`[Run]` postinstall). Staging was
+  verified end-to-end earlier (downloads Py 3.11.15; tkinter + pip import).
+- **Next:** re-verify with a torch feature (Marquee/Sonara) selected, then a clean
+  Windows VM; then the GitHub Releases pipeline.
 
 ### 2026-06-15 — Public-launch prep, Phase 1 start (distribution foundation)
 Architecture + dependency contract for the public build (tracked in `PHASES.md`).
