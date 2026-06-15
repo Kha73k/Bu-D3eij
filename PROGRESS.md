@@ -31,6 +31,24 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 
 ## Completed
 
+### 2026-06-15 — Public-launch prep, Phase 2 start (feature-selective installer)
+Began the installer (tracked in `PHASES.md`). Base Python decided:
+**python-build-standalone** (relocatable, ships tkinter + pip — the Windows
+*embeddable* zip omits tkinter, which the GUI needs); the installer = an Inno
+Setup component UI over a Python bootstrap.
+- **`installer/bootstrap.py`:** turns a feature selection + CPU/CUDA choice into
+  the ordered pip plan (a torch group first iff Marquee/Sonara is picked, then
+  Core, then each group) and runs it into the target Python. Flags: `--detect-gpu`
+  (nvidia-smi → WMI fallback), `--dry-run`, `--reqs-dir`, `--python`. The pure
+  `plan_install` logic is unit-tested.
+- **`installer/README.md`:** build plan + base-Python rationale + remaining work
+  (the `.iss`, launcher, staging the standalone Python, clean-VM test).
+- **Verified:** `tests/test_installer.py` 12/0 (plan composition/order,
+  normalization, bad-variant raise, referenced reqs files exist, GPU probe);
+  dry-run prints the correct 5-step plan; `--detect-gpu` → `cuda` on the 3070 Ti.
+- **Next:** write `bud3eij.iss` + launcher (writable here; compiling needs Inno
+  Setup installed), then a clean-VM install test, then the Releases pipeline.
+
 ### 2026-06-15 — Public-launch prep, Phase 1 start (distribution foundation)
 Architecture + dependency contract for the public build (tracked in `PHASES.md`).
 - **Decided:** packaging = a **feature-selective installer that builds a managed

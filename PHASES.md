@@ -56,13 +56,17 @@ A reliable, downloadable build + model/dependency delivery.
 - [ ] GitHub Releases pipeline (tag → artifact)
 - Depends on: Phase 0. (ML model weights already download on demand in the app.)
 
-### Phase 2 — Feature-selective installer ⬜ TODO
+### Phase 2 — Feature-selective installer ⏳ IN PROGRESS
 Installer where users pick features; auto-configures.
-- [ ] Installer tech (Inno Setup / custom bootstrapper)
-- [ ] Feature groups: Core (Converter + Nexus) · Marquee · Vanguard · Sonara
-- [ ] GPU detect → CPU vs CUDA torch
-- [ ] Post-install model-pack fetch + verify
-- Depends on: Phase 1.
+- [x] Installer tech decided → Inno Setup UI + Python bootstrap; base Python =
+  `python-build-standalone` (relocatable, has tkinter — see `installer/README.md`)
+- [x] Bootstrap (`installer/bootstrap.py`): feature → ordered pip plan
+  (torch-cpu/cuda first if Marquee/Sonara) + `--detect-gpu`; tested
+- [ ] Inno Setup script (`bud3eij.iss`) + launcher (`pythonw app.py`)
+- [ ] Stage the standalone Python in the installer inputs
+- [ ] Test on a clean Windows VM (no Python / no model cache)
+- Depends on: Phase 1. (ML model weights download on demand; UI feature-gating
+  done in Phase 1.)
 
 ### Phase 3 — Marketing website ⬜ TODO (parallelizable after Phase 1)
 Discover → motivate → download.
