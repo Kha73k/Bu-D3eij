@@ -49,7 +49,7 @@ inline below.
   dependencies live in the venv.) 3.11 was chosen for guaranteed wheels of the
   doc stack (pdf2docx→PyMuPDF, docx2pdf→pywin32, reportlab, lxml).
 - **ffmpeg** (for MP4/MP3/WAV) is installed via winget (Gyan.FFmpeg) at:
-  `C:\Users\Khalifa\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin`
+  `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1.1-full_build\bin`
   It is on the **user PATH for newly-opened terminals only**. An agent shell
   started before the install will NOT see it, so for A/V work prepend that
   `bin` to `$env:PATH`, or `shutil.which("ffmpeg")` returns None.
@@ -169,9 +169,11 @@ inline below.
 > `tokenizers` (Rust) library, whose binary extension + data PyInstaller misses by
 > static analysis. `onnxruntime`/`numpy` are already collected (rembg/upscaler), so
 > nothing else changes. The DeBERTa-v3 ONNX model (~1.7 GB) + `tokenizer.json` are
-> **not bundled** (keeps the exe lean) and — for this personal build — **not hosted**
-> either: they sit in the local cache `~/.bud3eij/models/vanguard/`, which both the
-> source app and the frozen exe load from (`vanguard._ensure_file`).
+> **not bundled** (keeps the exe lean) but **are now self-hosted** on the Hugging Face
+> Hub (`_BASE_URL` in `vanguard.py`) and **download on demand**, SHA-256 + exact-size
+> verified, into `~/.bud3eij/models/vanguard/` — same pattern as fontid/upscale (launch
+> prep, 2026-06-15). `_ensure_file` still prefers a `_MEIPASS` bundle → dev `vanguard_model/`
+> → cache before downloading.
 
 > **v2.0 Background Remover (rembg) build notes — already applied above:**
 > - **rembg needs `onnxruntime` at runtime**, so the old `--exclude-module
@@ -435,10 +437,12 @@ still apply; only the file a function lives in changed.
   `model.onnx`. **fp32 is the only viable format here:** it matched torch exactly
   (Δ=0.0000), but dynamic **int8** drifted +0.15 toward false positives and **fp16 won't
   load in onnxruntime** for this graph (`Cast`/`Clip` op-type mismatches) — both rejected.
-  Because the app is **personal-use only**, the 1.7 GB `model.onnx` + `tokenizer.json` are
-  **neither bundled nor hosted**: they live in the local cache `~/.bud3eij/models/vanguard/`
-  where `_ensure_file` finds them (it checks, in order, a `sys._MEIPASS` bundle → a dev-local
-  `vanguard_model/` → the cache; raises a clear error if absent). **Caveat (by design):**
+  The 1.7 GB `model.onnx` + `tokenizer.json` are **not bundled** (keeps the exe lean) but
+  **self-hosted on the Hugging Face Hub** (`VANGUARD_FILE_META` + `_BASE_URL` in
+  `vanguard.py`) and **downloaded on demand** — SHA-256 + exact-size verified — into the
+  cache `~/.bud3eij/models/vanguard/`, mirroring fontid/upscale (launch prep, 2026-06-15).
+  `_ensure_file` checks, in order, a `sys._MEIPASS` bundle → a dev-local `vanguard_model/`
+  → the cache → download. **Caveat (by design):**
   desklib catches AI text near-100% but over-flags some clean/simple/non-native *human*
   writing as AI — inherent to all detectors; the UI shows an estimate + disclaimer, never an
   accusation. GUI panel `_build_vg_detector` (was `_build_vanguard` before the

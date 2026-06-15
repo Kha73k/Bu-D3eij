@@ -10,11 +10,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-FFMPEG_BIN = (r"C:\Users\Khalifa\AppData\Local\Microsoft\WinGet\Packages"
-              r"\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe"
-              r"\ffmpeg-8.1.1-full_build\bin")
-if os.path.isdir(FFMPEG_BIN):
-    os.environ["PATH"] = FFMPEG_BIN + os.pathsep + os.environ["PATH"]
+import shutil
+
+# Prefer ffmpeg already on PATH; otherwise fall back to the default winget
+# (Gyan.FFmpeg) install location under the current user's profile — no
+# hard-coded user name, and version-agnostic via glob.
+if not shutil.which("ffmpeg"):
+    _packages = Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "WinGet" / "Packages"
+    for _bin in sorted(_packages.glob("Gyan.FFmpeg_*/ffmpeg-*-full_build/bin")):
+        if _bin.is_dir():
+            os.environ["PATH"] = str(_bin) + os.pathsep + os.environ["PATH"]
+            break
 
 import app  # noqa: E402
 from bud3eij.formats import CONVERSIONS, IMAGE_EXTS, PILLOW_FORMAT  # noqa: E402

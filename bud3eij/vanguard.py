@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import math
 import re
+import shutil
 import sys
+import urllib.request
 from pathlib import Path
 
 from .converters import _read_text
@@ -30,13 +32,31 @@ _MODEL_DIR = Path.home() / ".bud3eij" / "models" / "vanguard"
 _DEV_DIR = Path(__file__).resolve().parent.parent / "vanguard_model"  # dev: local export
 
 # The ONNX model + its fast tokenizer. The model is large (fp32, ~1.7 GB — fp16 won't
-# load in onnxruntime for this graph and int8 hurts accuracy), so for this personal
-# build it is NOT bundled in the exe or hosted online: it is produced once by
-# `_export_vanguard.py` and lives in the local cache (`_MODEL_DIR`), where both the
-# source app and the frozen exe load it. (A self-host download URL could be added here
-# later if the app is ever distributed.)
+# load in onnxruntime for this graph and int8 hurts accuracy), so it is NOT bundled in
+# the exe (keeps it lean). It is a derivative of desklib's MIT-licensed detector,
+# re-exported by this project (`tools/export_vanguard_model.py`) and self-hosted on the
+# Hugging Face Hub for on-demand download. `_ensure_file` resolves, in order: a frozen-exe
+# bundle -> a dev export dir -> the local cache -> a SHA-256 + exact-size-verified download
+# from `_BASE_URL` (mirroring fontid/upscale).
 VANGUARD_FILES = {"onnx": "model.onnx", "tokenizer": "tokenizer.json"}
+# Self-hosted model repo. MUST match the Hugging Face repo the two files are uploaded to.
+_BASE_URL = "https://huggingface.co/Kha73k/bud3eij-vanguard-detector/resolve/main/"
+# kind -> (filename, sha256, exact byte size). Exact size: a truncated download must not
+# pass the cache/integrity check (cf. the fontid truncated-download bug).
+VANGUARD_FILE_META: dict[str, tuple[str, str, int]] = {
+    "onnx": (
+        "model.onnx",
+        "27175d56c33191f603e1e578c1b0717f96133689dd7a59491c2a657c1ca0c865",
+        1_737_826_293,
+    ),
+    "tokenizer": (
+        "tokenizer.json",
+        "5124ef2ead1a10a717703bc436de7f353da76d6340e4587719b42b1693707964",
+        8_656_624,
+    ),
+}
 DETECTOR_NAME = "desklib DeBERTa-v3-large"
+_DOWNLOAD_TIMEOUT = 30  # socket timeout (s) per read: a stalled download fails, not hangs
 
 _MAX_TOKENS = 768       # the detector's training context length
 _MIN_WORDS = 40         # below this, results are unreliable -> caveat
@@ -106,9 +126,23 @@ def extract_document_text(path) -> str:
 # --------------------------------------------------------------------------- #
 # Model + tokenizer (download once, cache)
 # --------------------------------------------------------------------------- #
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def _ensure_file(kind: str) -> Path:
-    """Locate a detector file: frozen-exe bundle, then dev export dir, then the cache."""
-    filename = VANGUARD_FILES[kind]
+    """Locate a detector file: frozen-exe bundle, dev export dir, cache, else download.
+
+    On first use the file is downloaded from `_BASE_URL` (SHA-256 + exact-size verified)
+    and cached in `_MODEL_DIR`, mirroring fontid/upscale. The 1.7 GB model is not bundled.
+    """
+    filename, sha256, exact_size = VANGUARD_FILE_META[kind]
     base = getattr(sys, "_MEIPASS", None)
     if base:
         bundled = Path(base) / "bud3eij" / "models" / "vanguard" / filename
@@ -117,11 +151,26 @@ def _ensure_file(kind: str) -> Path:
     if (_DEV_DIR / filename).exists():
         return _DEV_DIR / filename
     dest = _MODEL_DIR / filename
-    if dest.exists() and dest.stat().st_size > 10_000:
+    if dest.exists() and dest.stat().st_size == exact_size:
         return dest
-    raise ConversionError(
-        f"Detector file '{filename}' not found. Put the Vanguard model files "
-        f"(model.onnx + tokenizer.json) in {_MODEL_DIR}.")
+    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    try:
+        with urllib.request.urlopen(_BASE_URL + filename,
+                                    timeout=_DOWNLOAD_TIMEOUT) as resp, \
+                open(tmp, "wb") as fh:  # noqa: S310 - pinned HTTPS URL
+            shutil.copyfileobj(resp, fh)
+    except Exception as exc:  # noqa: BLE001
+        tmp.unlink(missing_ok=True)
+        raise ConversionError(
+            f"Could not download the AI Text Detector model '{filename}': {exc}. "
+            f"You can also place it manually in {_MODEL_DIR}.") from exc
+    if tmp.stat().st_size != exact_size or _sha256(tmp) != sha256:
+        tmp.unlink(missing_ok=True)
+        raise ConversionError(
+            "Downloaded detector file failed its integrity check (size/hash mismatch).")
+    tmp.replace(dest)
+    return dest
 
 
 def _session():

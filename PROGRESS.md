@@ -31,6 +31,33 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 
 ## Completed
 
+### 2026-06-15 — Public-launch prep, Phase 0 (repo readiness)
+First phase of the GitHub public-launch roadmap (see `project-launch-plan.md` on
+the Desktop). Decisions locked with the user: on-demand model delivery, CPU
+torch default (CUDA optional), MIT license, ship v1 unsigned, Windows-only.
+- **Secrets/history scan:** clean — no keys/tokens; `.gitignore` already covers
+  `.venv`/`dist`/`build`/`*.log`/models/export dirs; single author in history.
+- **MIT `LICENSE`** added (source code); **`THIRD_PARTY.md`** documents every
+  library + on-demand model license. **Two flags surfaced:** *PyMuPDF* is
+  **AGPL-3.0** (pulled by `pymupdf4llm`/`pdf2docx`) — MIT covers our source but a
+  bundled `.exe` is conveyed under AGPL (public source satisfies it; decide for
+  Phase 1); *UltraSharp V2* (upscaler Max) is **CC-BY-NC-SA 4.0** non-commercial —
+  fine for a free build (download-on-demand, attributed), swap if ever monetized.
+- **`SYSTEM_REQUIREMENTS.md`** added (Win 10+, GPU optional w/ CPU fallback,
+  per-feature model download sizes — also feeds the installer + website phases).
+- **Home-path scrub:** `C:\Users\Khalifa\…` removed from `CLAUDE.md` (→
+  `%LOCALAPPDATA%`) and `tests/test_headless.py` (now derives ffmpeg from PATH /
+  `shutil.which` + a glob of the winget dir — also fixes a portability bug).
+- **`MIGRATION_PROMPT.txt`** untracked (`git rm --cached` + gitignored; local
+  copy kept) — personal new-PC doc, not for the public repo.
+- **Vanguard model now downloadable** (the last blocker): `vanguard._ensure_file`
+  gained a SHA-256 + exact-size-verified on-demand download from `_BASE_URL`
+  (Hugging Face), mirroring `fontid.py`. Local cache hashes baked into
+  `VANGUARD_FILE_META`. **Pending user action:** create the HF repo and upload
+  `model.onnx` + `tokenizer.json`; `_BASE_URL` is set to
+  `Kha73k/bud3eij-vanguard-detector` (change the constant if a different repo name
+  is used). Verified: compiles + resolves from cache with no download triggered.
+
 ### 2026-06-14 — Debounced resize reflow (v4.3.2)
 Follow-up to the drag fix: window **resize** was sluggish on content-heavy tabs
 (Marquee/Nexus) but fine on empty ones. **Profiled** (`cProfile` over a simulated

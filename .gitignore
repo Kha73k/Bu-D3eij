@@ -23,6 +23,9 @@ desktop.ini
 # --- Throwaway verification scripts ---
 _verify_*.py
 
+# --- Personal new-PC migration doc (kept locally, not published) ---
+MIGRATION_PROMPT.txt
+
 # --- v3.0 Vanguard model export (dev-only) ---
 # Throwaway export venv (torch etc.) and the large model working dir. The shipped
 # model lives in the user cache (~/.bud3eij/models/vanguard/); regenerate it with
