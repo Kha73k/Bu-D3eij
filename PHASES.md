@@ -62,9 +62,9 @@ Installer where users pick features; auto-configures.
   `python-build-standalone` (relocatable, has tkinter — see `installer/README.md`)
 - [x] Bootstrap (`installer/bootstrap.py`): feature → ordered pip plan
   (torch-cpu/cuda first if Marquee/Sonara) + `--detect-gpu`; tested
-- [ ] Inno Setup script (`bud3eij.iss`) + launcher (`pythonw app.py`)
-- [ ] Stage the standalone Python in the installer inputs
-- [ ] Test on a clean Windows VM (no Python / no model cache)
+- [~] Inno Setup `.iss` + staging `build.ps1` + launcher (shortcut → pythonw)
+  written — **UNVERIFIED** (compiling needs Inno Setup; not installed here)
+- [ ] Compile + smoke-test on a clean Windows VM (no Python / no model cache)
 - Depends on: Phase 1. (ML model weights download on demand; UI feature-gating
   done in Phase 1.)
 

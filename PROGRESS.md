@@ -46,8 +46,17 @@ Setup component UI over a Python bootstrap.
 - **Verified:** `tests/test_installer.py` 12/0 (plan composition/order,
   normalization, bad-variant raise, referenced reqs files exist, GPU probe);
   dry-run prints the correct 5-step plan; `--detect-gpu` → `cuda` on the 3070 Ti.
-- **Next:** write `bud3eij.iss` + launcher (writable here; compiling needs Inno
-  Setup installed), then a clean-VM install test, then the Releases pipeline.
+- **`installer/bud3eij.iss` + `installer/build.ps1`:** the Inno Setup script
+  (component UI, GPU-detected CPU/CUDA page, copy Python + source, run bootstrap,
+  create the shortcut) and the staging script (downloads python-build-standalone,
+  copies the app source into `installer/build/`, git-ignored). Both **written but
+  UNVERIFIED** — Inno Setup isn't installed here, so they can't be compiled/run in
+  this environment. The staging copy logic was exercised (`build.ps1 -SkipPython`
+  stages the source); both files are forced ASCII-only (PowerShell 5.1 + ISCC
+  misread non-ASCII-without-BOM, which first broke `build.ps1`).
+- **Next (needs your machine):** install Inno Setup, run `build.ps1`, compile the
+  `.iss` → `BuD3eij-Setup.exe`, and test on a clean Windows VM; then the GitHub
+  Releases pipeline.
 
 ### 2026-06-15 — Public-launch prep, Phase 1 start (distribution foundation)
 Architecture + dependency contract for the public build (tracked in `PHASES.md`).

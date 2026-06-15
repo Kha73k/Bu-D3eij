@@ -17,8 +17,9 @@ unpacked anywhere — exactly what an installer-built env needs.
 | File | Role | Status |
 |------|------|--------|
 | `bootstrap.py` | Feature → pip plan; installs Core + selected groups + CPU/CUDA torch into the target Python. Also `--detect-gpu`. | ✅ done + tested |
-| `bud3eij.iss` | Inno Setup script: component-selection UI, GPU detect, lay down Python + app source, run bootstrap with a progress window, create the shortcut. | ⬜ TODO |
-| `launcher` | What the Start-menu/desktop shortcut runs: `pythonw.exe app.py` from the installed env (no console window). | ⬜ TODO |
+| `build.ps1` | Staging: downloads the standalone Python + copies the app source into `build/` (the Inno Setup input). | ✍️ written, unverified |
+| `bud3eij.iss` | Inno Setup script: component UI, CPU/CUDA page (GPU-detected default), copy Python + app source, run bootstrap, create the shortcut. | ✍️ written, unverified |
+| Launcher | The shortcut runs `{app}\python\pythonw.exe {app}\app.py` directly (no console window) — created by the `.iss`; no separate file. | ✅ in the `.iss` |
 
 ## bootstrap.py
 Pure-logic core (`plan_install`) is unit-tested in
@@ -38,7 +39,20 @@ python installer\bootstrap.py --features marquee,sonara --torch cpu `
     --reqs-dir <installdir>\requirements --python <installdir>\python\python.exe
 ```
 
-## Install flow (target for `bud3eij.iss`)
+## Building the installer
+Prereq: [Inno Setup 6](https://jrsoftware.org/isinfo.php) (free) on the build PC.
+1. `pwsh installer\build.ps1` — downloads the standalone Python + stages the app
+   source into `installer\build\`. (Verify/update `-PyRelease` against the
+   python-build-standalone releases page.)
+2. Compile `installer\bud3eij.iss` with Inno Setup (open in the IDE → Build, or
+   `ISCC.exe installer\bud3eij.iss`) → `installer\dist\BuD3eij-Setup.exe`.
+3. Test on a **clean Windows VM** (no Python, no `~/.bud3eij` model cache): run
+   setup, pick a feature subset, confirm the env builds and the app launches with
+   only the chosen sections visible (feature-gating).
+
+`installer\build\` and `installer\dist\` are git-ignored (build artifacts).
+
+## Install flow (implemented in `bud3eij.iss`)
 1. Welcome → license (MIT + the PyMuPDF-AGPL / UltraSharp-NC notices) → unsigned
    SmartScreen note.
 2. `--detect-gpu` → preselect **CPU** (default) or **CUDA**.
@@ -51,9 +65,9 @@ python installer\bootstrap.py --features marquee,sonara --torch cpu `
    tool use; nothing else to fetch.)
 
 ## Remaining Phase 2 work
-- Write `bud3eij.iss` + the launcher; wire `bootstrap.py` as a post-install step.
-- Acquire/stage the standalone Python build in the installer inputs.
-- UI feature-gating already lands in the app (`bud3eij/features.py`) so an env
+- **Compile + smoke-test the `.iss`** on a clean VM — the untested part; fix any
+  Inno Setup / bootstrap issues that only surface at install time.
+- Confirm the `python-build-standalone` release tag in `build.ps1` is current.
+- UI feature-gating already lands in the app (`bud3eij/features.py`), so an env
   missing a group hides that section automatically.
-- Test on a clean Windows VM (no Python / no model cache); then the GitHub
-  Releases pipeline can publish the compiled installer.
+- Then Phase 1's GitHub Releases pipeline can publish `BuD3eij-Setup.exe`.
