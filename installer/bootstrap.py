@@ -94,7 +94,10 @@ def _pip_install(python: str, reqs_dir, filename: str, dry_run: bool = False) ->
     if not req.exists():
         print(f"  missing requirements file: {req}", file=sys.stderr)
         return 1
-    cmd = [python, "-m", "pip", "install", "--no-input", "-r", str(req)]
+    # --no-warn-script-location: the app imports these as modules and never calls
+    # the installed console scripts, so pip's "not on PATH" notices are just noise.
+    cmd = [python, "-m", "pip", "install", "--no-input",
+           "--no-warn-script-location", "--disable-pip-version-check", "-r", str(req)]
     print(">>", " ".join(cmd), flush=True)
     return 0 if dry_run else subprocess.call(cmd)
 

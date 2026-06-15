@@ -60,8 +60,15 @@ Setup component UI over a Python bootstrap.
   "yellow" lines were harmless (already-satisfied / scripts-not-on-PATH). Added a
   finish-page **"Launch Bu D3eij"** checkbox (`[Run]` postinstall). Staging was
   verified end-to-end earlier (downloads Py 3.11.15; tkinter + pip import).
-- **Next:** re-verify with a torch feature (Marquee/Sonara) selected, then a clean
-  Windows VM; then the GitHub Releases pipeline.
+- **Cold-start VM test PASSED (Windows Sandbox):** on a clean Windows (no Python /
+  ffmpeg / model cache) the installer ran, **only the chosen sections appeared**
+  (feature-gating), and an on-demand AI model downloaded + worked. Added
+  `installer/test-sandbox.ps1` to spin this up in one command. Also quieted pip's
+  harmless "script not on PATH" notices in the install window
+  (`--no-warn-script-location` + `--disable-pip-version-check`) — they alarmed
+  without meaning anything (the app imports modules, never the console scripts).
+- **Next:** confirm a torch feature (Marquee/Sonara) install path; decide ffmpeg
+  handling (A/V + YouTube need it); then the GitHub Releases pipeline.
 
 ### 2026-06-15 — Public-launch prep, Phase 1 start (distribution foundation)
 Architecture + dependency contract for the public build (tracked in `PHASES.md`).
