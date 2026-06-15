@@ -78,6 +78,12 @@ def _load_audio(src: Path, model):
     from demucs.audio import AudioFile, convert_audio
 
     errors = []
+    try:  # best-effort ffmpeg on PATH (download on demand); torchaudio is the fallback
+        from .ffmpeg import ensure_ffmpeg
+
+        ensure_ffmpeg()
+    except Exception:  # noqa: BLE001
+        pass
     try:
         return AudioFile(src).read(streams=0, samplerate=model.samplerate,
                                    channels=model.audio_channels)

@@ -67,8 +67,17 @@ Setup component UI over a Python bootstrap.
   harmless "script not on PATH" notices in the install window
   (`--no-warn-script-location` + `--disable-pip-version-check`) — they alarmed
   without meaning anything (the app imports modules, never the console scripts).
-- **Next:** confirm a torch feature (Marquee/Sonara) install path; decide ffmpeg
-  handling (A/V + YouTube need it); then the GitHub Releases pipeline.
+- **ffmpeg now on-demand (`bud3eij/ffmpeg.py`):** A/V conversion, YouTube and
+  Sonara no longer need a manually-installed ffmpeg — `ensure_ffmpeg()` uses a
+  system one if present, else downloads a pinned static build (gyan 8.1.1
+  essentials, SHA-256 + size verified, ~109 MB) into `~/.bud3eij/ffmpeg/` on first
+  A/V use and prepends it to PATH; the existing `convert_av`/`download_youtube`/
+  `_load_audio` paths then work unchanged (Sonara best-effort + torchaudio
+  fallback). Nothing bundled/re-distributed (THIRD_PARTY/SYSTEM_REQUIREMENTS
+  updated). Verified: helper returns the system ffmpeg; extraction yields
+  ffmpeg.exe + ffprobe.exe; headless `[12]`.
+- **Next:** confirm a torch feature (Marquee/Sonara) install on a clean VM; then
+  the GitHub Releases pipeline.
 
 ### 2026-06-15 — Public-launch prep, Phase 1 start (distribution foundation)
 Architecture + dependency contract for the public build (tracked in `PHASES.md`).

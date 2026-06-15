@@ -472,5 +472,14 @@ try:
 finally:
     _F._installed = _real_inst
 
+print("\n[12] on-demand ffmpeg helper")
+from bud3eij import ffmpeg as _ff  # noqa: E402
+check("have_ffmpeg() true (ffmpeg on PATH in tests)", _ff.have_ffmpeg() is True)
+_ffdir = _ff.ensure_ffmpeg()
+check("ensure_ffmpeg returns a dir with ffmpeg.exe",
+      os.path.isfile(os.path.join(_ffdir, "ffmpeg.exe")), _ffdir)
+check("pinned ffmpeg url is the gyan github mirror",
+      _ff._FFMPEG_URL.startswith("https://github.com/GyanD/codexffmpeg/"))
+
 print(f"\n==== {PASS} passed, {FAIL} failed ====")
 sys.exit(1 if FAIL else 0)

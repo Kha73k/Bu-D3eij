@@ -71,9 +71,12 @@ Copyleft / dual-licensed:
 
 ## External tools (not bundled)
 
-- **FFmpeg** — required at runtime for audio/video conversion and YouTube
-  downloads; installed separately by the user (e.g. `winget install Gyan.FFmpeg`).
-  Licensed LGPL-2.1+/GPL depending on build. Not distributed with Bu D3eij.
+- **FFmpeg** — needed at runtime for audio/video conversion and YouTube downloads.
+  Bu D3eij uses a system ffmpeg if present, otherwise **downloads a pinned static
+  build on demand** (gyan.dev essentials via its GitHub mirror, SHA-256 + size
+  verified) into `~/.bud3eij/ffmpeg/` on first A/V use. It is **not bundled or
+  re-distributed** by us — the user fetches it from the original distributor (the
+  essentials build is GPL/LGPL).
 - **Microsoft Word / PowerPoint** — optional; used via COM for high-fidelity
   DOCX/PPTX → PDF when installed. Not distributed.
 

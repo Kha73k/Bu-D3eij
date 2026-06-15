@@ -53,6 +53,12 @@ inline below.
   It is on the **user PATH for newly-opened terminals only**. An agent shell
   started before the install will NOT see it, so for A/V work prepend that
   `bin` to `$env:PATH`, or `shutil.which("ffmpeg")` returns None.
+  **App runtime (launch prep, 2026-06-15):** the shipped app no longer requires a
+  system ffmpeg — `bud3eij/ffmpeg.py` `ensure_ffmpeg()` uses one if on PATH, else
+  downloads a pinned static build (gyan 8.1.1 essentials, SHA-256 + size verified,
+  ~109 MB) into `~/.bud3eij/ffmpeg/` on first A/V use and prepends it to PATH;
+  `convert_av`/`download_youtube`/`_load_audio` call it (Sonara best-effort, with
+  the torchaudio fallback). Not bundled/re-distributed.
 - **Microsoft Word is installed**, so DOCX→PDF uses a high-fidelity **direct
   Word-COM** path (`_docx_to_pdf_word`; docx2pdf was dropped in v3.1 — it leaked
   a hidden WINWORD.EXE on every failed conversion); `reportlab` is the
@@ -961,6 +967,7 @@ bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
   formats.py      format model, helpers, ConversionError
   converters.py   convert_file + all document/image/AV converters
   youtube.py      download_youtube (yt-dlp)
+  ffmpeg.py       ensure_ffmpeg - on-demand static ffmpeg download (launch prep)
   background.py   remove_background + BG_MODELS (Marquee bg remover)
   upscale.py      upscale_image + TARGETS (Marquee Real-ESRGAN upscaler)
   vanguard.py     detect_ai_text + CONFIDENCE_TIERS (Vanguard AI text detector)

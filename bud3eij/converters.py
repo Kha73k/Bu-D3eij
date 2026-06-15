@@ -5,7 +5,6 @@ logic — no GUI; ``convert_file`` is the dispatch entry point.
 """
 from __future__ import annotations
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -401,11 +400,9 @@ def _pptx_to_pdf_reportlab(src: Path, out: Path) -> None:
 def convert_av(src: Path, out: Path, target_ext: str) -> None:
     import ffmpeg
 
-    if shutil.which("ffmpeg") is None:
-        raise ConversionError(
-            "ffmpeg is not installed or not on PATH. Install it "
-            "(e.g. 'winget install Gyan.FFmpeg') and restart the app."
-        )
+    from .ffmpeg import ensure_ffmpeg
+
+    ensure_ffmpeg()  # system ffmpeg, or download a pinned static build on demand
     target_ext = target_ext.lower()
     src_ext = src.suffix.lower().lstrip(".")
 

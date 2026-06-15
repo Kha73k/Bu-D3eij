@@ -21,9 +21,10 @@ models once, on first use, then work offline.
 ## Optional
 - **Microsoft Word / PowerPoint** — high-fidelity DOCX/PPTX → PDF (a text-only
   fallback is used when they're absent).
-- **FFmpeg** — required for audio/video conversion and YouTube downloads
-  (`winget install Gyan.FFmpeg`). _(The installer's handling of FFmpeg is TBD —
-  bundle vs. prompt — decided in the installer phase.)_
+- **FFmpeg** — needed for audio/video conversion and YouTube downloads. **No
+  manual install required**: the app uses a system ffmpeg if present, otherwise
+  downloads a pinned static build (~109 MB) on first A/V use into
+  `~/.bud3eij/ffmpeg/`.
 
 ## Disk usage by feature (models download on first use)
 

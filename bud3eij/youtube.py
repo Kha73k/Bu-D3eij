@@ -1,7 +1,6 @@
 """YouTube (yt-dlp) download helper for Bu D3eij."""
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from .formats import ConversionError
@@ -27,18 +26,16 @@ def download_youtube(url: str, fmt: str, out_dir, progress_hook=None) -> Path:
     url = (url or "").strip()
     if not url.lower().startswith(("http://", "https://")):
         raise ConversionError("Enter a valid video URL (must start with http:// or https://).")
-    if shutil.which("ffmpeg") is None:
-        raise ConversionError(
-            "ffmpeg is not installed or not on PATH. Install it "
-            "(e.g. 'winget install Gyan.FFmpeg') and restart the app."
-        )
+    from .ffmpeg import ensure_ffmpeg
+
+    ffmpeg_dir = ensure_ffmpeg()  # system ffmpeg, or download a static build on demand
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     outtmpl = str(out_dir / "%(title)s.%(ext)s")
     opts: dict = {
         "outtmpl": outtmpl,
-        "ffmpeg_location": shutil.which("ffmpeg"),
+        "ffmpeg_location": ffmpeg_dir,
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,  # a single video, even if the URL has a list= param

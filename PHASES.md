@@ -66,7 +66,8 @@ Installer where users pick features; auto-configures.
   Core env imports/launches the app; finish-page "Launch" added (dev-verified)
 - [x] Cold-start tested in **Windows Sandbox**: install works, only chosen sections
   appear (feature-gating), on-demand AI model downloads + works (Core + Vanguard)
-- [ ] Confirm a torch feature (Marquee/Sonara) install path; decide ffmpeg handling
+- [x] ffmpeg handling → on-demand download (`bud3eij/ffmpeg.py`); no manual install
+- [ ] Confirm a torch feature (Marquee/Sonara) install path on a VM
 - Depends on: Phase 1. (ML model weights download on demand; UI feature-gating
   done in Phase 1.)
 
