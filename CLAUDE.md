@@ -67,6 +67,15 @@ inline below.
   `base.txt`) + `truststore.inject_into_ssl()` in `bud3eij/__init__.py` routes SSL
   through the live OS trust store. Masked on dev hosts that have ambient certs;
   only a pristine VM/Sandbox reveals it.
+  **VC++ runtime (same pass):** the standalone Python ships the C runtime but not
+  the C++ one (`msvcp140.dll`/`vcomp140.dll`) that **onnxruntime** needs, and a
+  clean machine has no VC++ redistributable — so onnxruntime (Vanguard
+  detector/OCR/fontid + rembg Flash/Mid) fails with *"DLL load failed … importing
+  onnxruntime_pybind11_state"*. Fix: `installer/build.ps1` bundles the
+  redistributable VC++ DLLs next to `python.exe`, and `bud3eij/__init__.py` calls
+  `os.add_dll_directory(<python dir>)` (the correct path for 3.8+ extension-module
+  deps — PATH is no longer searched for those). Also masked on dev hosts (VC++ in
+  System32).
 - **Microsoft Word is installed**, so DOCX→PDF uses a high-fidelity **direct
   Word-COM** path (`_docx_to_pdf_word`; docx2pdf was dropped in v3.1 — it leaked
   a hidden WINWORD.EXE on every failed conversion); `reportlab` is the

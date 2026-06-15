@@ -69,6 +69,8 @@ Installer where users pick features; auto-configures.
 - [x] ffmpeg handling → on-demand download (`bud3eij/ffmpeg.py`); no manual install
 - [x] Fix standalone-Python SSL (ships no CA bundle) → `truststore` OS trust store
   in `bud3eij/__init__.py`; was breaking ALL urllib downloads (found in VM test)
+- [x] Bundle VC++ C++ runtime (msvcp140) for onnxruntime on clean machines
+  (`build.ps1` + `os.add_dll_directory`); found in VM test
 - [ ] Confirm a torch feature (Marquee/Sonara) install path on a VM
 - Depends on: Phase 1. (ML model weights download on demand; UI feature-gating
   done in Phase 1.)

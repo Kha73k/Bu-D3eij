@@ -85,6 +85,11 @@ Copyleft / dual-licensed:
 Icons (vscode-icons — MIT; Lucide — ISC) and the Inter font (SIL OFL 1.1) — see
 [`assets/LICENSES.md`](assets/LICENSES.md).
 
+The installer also bundles the **Microsoft Visual C++ runtime** DLLs (`msvcp140.dll`
+etc.) next to the standalone Python — redistributable under Microsoft's Visual C++
+redistributable terms, and required by `onnxruntime` on machines without the VC++
+redistributable installed.
+
 ---
 
 _License names above reflect each project's published license at the time of

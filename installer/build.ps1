@@ -49,6 +49,20 @@ if (-not $SkipPython) {
   }
 }
 
+# Bundle the MS VC++ C++ runtime DLLs next to python.exe. The standalone Python
+# ships the C runtime (vcruntime140) but not the C++ runtime (msvcp140 etc.) that
+# onnxruntime needs, and a clean machine has no VC++ redistributable. Copy the
+# redistributable DLLs so C++ extension modules load (bud3eij/__init__.py adds this
+# dir to the DLL search). Runs every build so -SkipPython re-stages get them too.
+if (Test-Path $PyDir) {
+  $sys32 = Join-Path $env:SystemRoot "System32"
+  foreach ($d in @("msvcp140.dll","msvcp140_1.dll","msvcp140_2.dll","vcomp140.dll","concrt140.dll")) {
+    $src = Join-Path $sys32 $d
+    if (Test-Path $src) { Copy-Item $src -Destination $PyDir -Force }
+    else { Write-Warning "VC++ runtime DLL not found in System32: $d" }
+  }
+}
+
 # Copy the app source into the build root (mirrors the install layout).
 $items = @("app.py","bud3eij","assets","requirements","bud3eij_theme.json",
            "AppLogo.ico","DashboardLogo.png","LICENSE","THIRD_PARTY.md",

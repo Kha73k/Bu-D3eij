@@ -31,6 +31,21 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 
 ## Completed
 
+### 2026-06-15 — Public-launch prep: bundle the VC++ C++ runtime for onnxruntime
+Second clean-machine fix from VM testing: with SSL fixed, Vanguard's detector then
+failed with *"DLL load failed while importing onnxruntime_pybind11_state: The
+specified module could not be found."* `onnxruntime` is a C++ extension needing the
+MS VC++ C++ runtime (`msvcp140.dll`, `vcomp140.dll`); the standalone Python ships
+only the C runtime (`vcruntime140`), and a fresh Windows has no VC++ redistributable.
+**Fix (no admin):** `installer/build.ps1` bundles the redistributable VC++ DLLs
+(`msvcp140`/`_1`/`_2`, `vcomp140`, `concrt140`) next to `python.exe`, and
+`bud3eij/__init__.py` calls `os.add_dll_directory(<python dir>)` so the loader finds
+them (`add_dll_directory` is the correct path for 3.8+ extension-module deps — PATH
+is no longer searched for those). Verified the DLLs stage, `bud3eij` imports on the
+standalone python, and onnxruntime still loads in dev. Affects onnxruntime
+everywhere (Vanguard detector/OCR/fontid + Marquee rembg Flash/Mid). User to
+re-verify in the Sandbox.
+
 ### 2026-06-15 — Public-launch prep: fix standalone-Python SSL (truststore)
 VM (Windows Sandbox) testing surfaced a launch-blocker: in the installed app every
 on-demand download failed with `[SSL: CERTIFICATE_VERIFY_FAILED] unable to get
