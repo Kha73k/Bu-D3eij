@@ -48,7 +48,10 @@ Prereq: [Inno Setup 6](https://jrsoftware.org/isinfo.php) (free) on the build PC
    `ISCC.exe installer\bud3eij.iss`) → `installer\dist\BuD3eij-Setup.exe`.
 3. Test on a **clean Windows VM** (no Python, no `~/.bud3eij` model cache): run
    setup, pick a feature subset, confirm the env builds and the app launches with
-   only the chosen sections visible (feature-gating).
+   only the chosen sections visible (feature-gating). Easiest: `test-sandbox.ps1`
+   opens the compiled installer in a fresh **Windows Sandbox** (enable it once via
+   Windows Features). Note: Sandbox has no CUDA and no ffmpeg, so test the CPU path
+   and doc/image/AI tools there (A/V + YouTube need a separate ffmpeg install).
 
 `installer\build\` and `installer\dist\` are git-ignored (build artifacts).
 
