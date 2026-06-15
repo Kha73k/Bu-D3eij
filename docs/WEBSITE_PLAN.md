@@ -1,11 +1,13 @@
 # Bu D3eij — Website Plan (Phase 3)
 
-Living plan for the marketing site. Companion to `PHASES.md`. **Status: planning —
-not built yet** (taking time on the design; user has Tailwind UI ideas to fold in).
+Living plan for the marketing site. Companion to `PHASES.md`. **Status: building —
+landing + changelog drafted in `website/` (Tailwind + GSAP via CDN for preview);
+refining the design, then deploy.**
 
 ## Locked decisions
-- **Stack:** plain **HTML + Tailwind CSS** (user has Tailwind UI component ideas to use).
-- **Theme:** match the app — **dark-first, logo-red accent, Inter** font.
+- **Stack:** plain **HTML + Tailwind CSS + GSAP** (ScrollTrigger) for motion.
+- **Theme:** match the app — **dark-first, logo-red accent, Inter**, **iOS liquid-glass**
+  (glassmorphism) surfaces.
 - **Scope (v1):** a **landing page + a changelog page**.
 - **Hosting:** **GitHub Pages** (free) from this repo → `https://kha73k.github.io/Bu-D3eij`
   (custom domain optional later; ~$10–12/yr is the only possible cost, not required).
@@ -74,6 +76,29 @@ website/
   Tailwind UI ideas; lock the look before building everything.
 - **C. Build** — section by section (`index.html`, then `changelog.html`).
 - **D. Deploy** — Pages Action + wire the Download CTA to the GitHub Release.
+
+## Design language (liquid glass — built)
+- **Glass:** `backdrop-blur 14–16px`, `rgba(255,255,255,.05)` fill, hairline border, a
+  top rim-light `inset 0 1px rgba(255,255,255,.18)`, soft depth shadow, 16px radius / pills.
+- **Ambient:** slow-drifting red-glow "blobs" behind the glass (GSAP); warm-dark base (no pure black).
+- **Primary CTA:** red glass + red glow; press `scale(.97)`.
+- **Motion (GSAP + ScrollTrigger):** signature `expo.out` (`cubic-bezier(.16,1,.3,1)`); hero
+  stagger + scroll reveals + a **signature animation per feature** — Converter file-flow,
+  Marquee before→after clip wipe (scrubbed), Vanguard scan-sweep, Sonara equalizer, Nexus flip.
+  All gated behind `prefers-reduced-motion`; smooth-scroll anchors; ≤1–2 motions per view.
+- Grounded in the **ui-ux-pro-max** skill (Modern-Dark / Glassmorphism styles + animation UX rules).
+
+## Built so far
+- `website/index.html` — full landing (nav · hero · pillars · 5 feature panels with the
+  signature GSAP animations · how-it-works · requirements · download · FAQ · footer).
+- `website/changelog.html` — version timeline.
+- `website/assets/` — logos. Tailwind + GSAP via CDN for instant preview.
+
+## Remaining
+- Replace the CSS/SVG tool mocks with **real app screenshots/GIFs**.
+- **Compile Tailwind** to a small static CSS (drop the Play CDN) before launch.
+- **GitHub Pages deploy** (Action from `website/`) + wire the Download CTA to the GitHub Release.
+- Optional: custom domain.
 
 ## Open / user to provide
 - The Tailwind UI component ideas to use.

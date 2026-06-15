@@ -81,10 +81,11 @@ Installer where users pick features; auto-configures.
 Discover → motivate → download. Decided: plain **HTML + Tailwind**, **match the app
 theme** (dark + red + Inter), **landing + changelog**, hosted free on **GitHub Pages**.
 - [x] Plan + hosting + stack + theme decided (`docs/WEBSITE_PLAN.md`)
-- [ ] Capture screenshots/GIFs from the app
-- [ ] Design mockup (hero + a feature block), folding in the user's Tailwind UI ideas
-- [ ] Build landing + changelog (HTML/Tailwind, brand tokens)
-- [ ] Deploy: GitHub Pages Action; wire Download CTA → GitHub Release
+- [x] Design direction locked: **liquid glass + GSAP** (hero mockup approved)
+- [x] Build landing (`website/index.html`) + changelog (`website/changelog.html`) —
+  glass UI, signature per-feature GSAP animations, reduced-motion safe (CDN preview)
+- [ ] Replace placeholder tool mocks with real screenshots/GIFs
+- [ ] Compile Tailwind (drop the CDN) + GitHub Pages deploy; wire Download CTA → Release
 
 ### Phase 4 — Polish & launch ⬜ TODO
 - [ ] End-to-end test on a clean Windows box (no Python / CUDA / model cache)

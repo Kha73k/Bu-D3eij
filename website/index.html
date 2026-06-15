@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bu D3eij — convert anything, create anything, on your PC</title>
+<meta name="description" content="A free, open-source Windows app: convert documents, images, audio & video, plus local AI tools for backgrounds, upscaling, OCR, stems and more. 100% offline, no accounts, no limits." />
+<link rel="icon" href="assets/AppLogo.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: { extend: {
+      fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+      colors: {
+        base: '#141011', base2: '#1A1416', surface: '#252022',
+        brand: '#E11414', brandHover: '#B4000C', brandBright: '#F01818', brandDeep: '#8C0008',
+        ink: '#F2E9EA', muted: '#9C9194',
+      },
+    } },
+  };
+</script>
+<style>
+  html, body { background: #141011; }
+  body { color: #F2E9EA; font-family: Inter, sans-serif; }
+  .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(16px) saturate(140%); -webkit-backdrop-filter: blur(16px) saturate(140%); border: 1px solid rgba(255,255,255,0.10); box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.18), 0 12px 40px rgba(0,0,0,0.45); }
+  .glass-soft { background: rgba(255,255,255,0.035); backdrop-filter: blur(12px) saturate(130%); -webkit-backdrop-filter: blur(12px) saturate(130%); border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.12); }
+  .btn-primary { background: linear-gradient(180deg, rgba(240,24,24,0.95), rgba(177,0,12,0.95)); border: 1px solid rgba(255,255,255,0.20); box-shadow: inset 0 1px 0 rgba(255,255,255,0.40), 0 10px 34px rgba(225,20,20,0.45); transition: transform .15s cubic-bezier(.16,1,.3,1), box-shadow .2s, filter .2s; }
+  .btn-primary:hover { filter: brightness(1.08); box-shadow: inset 0 1px 0 rgba(255,255,255,0.5), 0 14px 44px rgba(240,24,24,0.6); }
+  .btn-primary:active { transform: scale(.97); }
+  .btn-ghost { transition: transform .15s cubic-bezier(.16,1,.3,1), background .2s, border-color .2s; }
+  .btn-ghost:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.22); }
+  .btn-ghost:active { transform: scale(.97); }
+  .blob { position: fixed; border-radius: 9999px; filter: blur(80px); pointer-events: none; z-index: 0; }
+  .ring-focus:focus-visible { outline: 2px solid #F01818; outline-offset: 3px; border-radius: 9999px; }
+  .checker { background-image: linear-gradient(45deg,#2b2629 25%,transparent 25%),linear-gradient(-45deg,#2b2629 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#2b2629 75%),linear-gradient(-45deg,transparent 75%,#2b2629 75%); background-size: 18px 18px; background-position: 0 0,0 9px,9px -9px,-9px 0; background-color:#1f1b1c; }
+  .eq-bar { width: 7px; border-radius: 4px; background: linear-gradient(180deg,#F01818,#8C0008); }
+  details > summary { list-style: none; cursor: pointer; }
+  details > summary::-webkit-details-marker { display: none; }
+  details[open] .faq-chev { transform: rotate(180deg); }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body class="antialiased overflow-x-hidden">
+
+  <div class="blob" style="width:560px;height:560px;background:radial-gradient(circle,#E11414,transparent 60%);top:-160px;left:-140px;opacity:.5;"></div>
+  <div class="blob" style="width:480px;height:480px;background:radial-gradient(circle,#8C0008,transparent 60%);top:30%;right:-160px;opacity:.38;"></div>
+  <div class="blob" style="width:420px;height:420px;background:radial-gradient(circle,#F01818,transparent 60%);top:75%;left:25%;opacity:.22;"></div>
+
+  <div class="relative z-10">
+  <header class="max-w-6xl mx-auto px-5">
+    <nav class="glass rounded-2xl mt-5 px-4 sm:px-5 py-3 flex items-center justify-between sticky top-5 z-50" data-hero>
+      <a href="#top" class="flex items-center gap-3">
+        <img src="assets/AppLogo.png" alt="Bu D3eij logo" class="w-9 h-9 rounded-xl" />
+        <span class="font-semibold tracking-tight text-[17px]">Bu D3eij</span>
+      </a>
+      <div class="hidden md:flex items-center gap-7 text-[14px] text-muted">
+        <a href="#features" class="hover:text-ink transition">Features</a>
+        <a href="#how" class="hover:text-ink transition">How it works</a>
+        <a href="#requirements" class="hover:text-ink transition">Requirements</a>
+        <a href="changelog.html" class="hover:text-ink transition">Changelog</a>
+      </div>
+      <a href="#download" class="btn-ghost ring-focus glass-soft rounded-full px-4 py-2 text-[14px] font-medium">Download</a>
+    </nav>
+  </header>
+
+  <main id="top" class="max-w-6xl mx-auto px-5">
+
+    <section class="pt-20 sm:pt-28 pb-20 text-center flex flex-col items-center">
+      <span class="glass-soft rounded-full px-4 py-1.5 text-[13px] text-muted mb-7" data-hero>
+        <span class="text-brandBright">●</span>&nbsp; 100% local · no accounts · no limits
+      </span>
+      <h1 class="font-extrabold tracking-tight leading-[1.04] text-[44px] sm:text-[68px] max-w-3xl" data-hero>
+        Convert anything.<br />Create anything.
+        <span class="block bg-gradient-to-r from-brandBright to-brand bg-clip-text text-transparent">On your PC.</span>
+      </h1>
+      <p class="text-muted text-[17px] sm:text-[19px] max-w-xl mt-6 leading-relaxed" data-hero>
+        Documents, images, audio &amp; video — plus local AI tools for backgrounds,
+        upscaling, transcription, stems and more. Free, open-source, fully offline.
+      </p>
+      <div class="flex flex-wrap items-center justify-center gap-3 mt-9" data-hero>
+        <a href="#download" class="btn-primary ring-focus rounded-full px-7 py-3.5 font-semibold text-[15px] text-white flex items-center gap-2">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l4-4m-4 4l-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+          Download for Windows
+        </a>
+        <a href="https://github.com/Kha73k/Bu-D3eij" class="btn-ghost ring-focus glass rounded-full px-6 py-3.5 font-medium text-[15px] flex items-center gap-2">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.49v-1.7c-2.78.62-3.37-1.37-3.37-1.37-.46-1.18-1.11-1.5-1.11-1.5-.91-.64.07-.62.07-.62 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.36 1.12 2.94.85.09-.66.35-1.12.63-1.38-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9v2.82c0 .27.18.6.69.49A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>
+          View on GitHub
+        </a>
+      </div>
+      <div class="flex flex-wrap items-center justify-center gap-2.5 mt-10" data-hero>
+        <span class="glass-soft rounded-full px-3.5 py-1.5 text-[12.5px] text-muted">Private by design</span>
+        <span class="glass-soft rounded-full px-3.5 py-1.5 text-[12.5px] text-muted">No sign-up</span>
+        <span class="glass-soft rounded-full px-3.5 py-1.5 text-[12.5px] text-muted">No file-size caps</span>
+        <span class="glass-soft rounded-full px-3.5 py-1.5 text-[12.5px] text-muted">MIT licensed</span>
+      </div>
+    </section>
+
+    <section class="pb-24 grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="glass rounded-2xl p-5 text-center" data-pillar>
+        <div class="text-brandBright mb-2 flex justify-center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <p class="font-semibold text-[15px]">100% local</p>
+        <p class="text-muted text-[13px] mt-1">Files never leave your PC.</p>
+      </div>
+      <div class="glass rounded-2xl p-5 text-center" data-pillar>
+        <div class="text-brandBright mb-2 flex justify-center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M9 17a3 3 0 0 0 6 0"/></svg></div>
+        <p class="font-semibold text-[15px]">No accounts</p>
+        <p class="text-muted text-[13px] mt-1">Install and go. No sign-up.</p>
+      </div>
+      <div class="glass rounded-2xl p-5 text-center" data-pillar>
+        <div class="text-brandBright mb-2 flex justify-center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14M12 5l7 7-7 7"/></svg></div>
+        <p class="font-semibold text-[15px]">No limits</p>
+        <p class="text-muted text-[13px] mt-1">No file-size caps, ever.</p>
+      </div>
+      <div class="glass rounded-2xl p-5 text-center" data-pillar>
+        <div class="text-brandBright mb-2 flex justify-center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l2.5 5 5.5.8-4 3.9 1 5.5L12 21l-5 .1 1-5.5-4-3.9 5.5-.8z"/></svg></div>
+        <p class="font-semibold text-[15px]">Free &amp; open</p>
+        <p class="text-muted text-[13px] mt-1">MIT-licensed on GitHub.</p>
+      </div>
+    </section>
+
+    <section id="features" class="py-10">
+      <div class="text-center mb-16" data-reveal>
+        <p class="text-brandBright text-[14px] font-semibold tracking-wide">FIVE TOOLBOXES, ONE APP</p>
+        <h2 class="font-extrabold text-[34px] sm:text-[46px] tracking-tight mt-2">Everything, done on-device</h2>
+      </div>
+
+      <div class="feat grid lg:grid-cols-2 gap-8 items-center mb-28">
+        <div data-feat-text>
+          <span class="text-muted text-[13px] font-semibold">01 — CONVERTER</span>
+          <h3 class="font-bold text-[30px] mt-2 mb-3">Convert documents, images, audio &amp; video</h3>
+          <p class="text-muted text-[16px] leading-relaxed">Drag, drop, done. PDFs, Word, PowerPoint, Markdown, every common image, MP3/WAV/MP4 — high-fidelity, in one place. Plus batch convert and YouTube downloads.</p>
+        </div>
+        <div class="glass rounded-3xl p-8 relative overflow-hidden" data-feat-visual>
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex flex-col gap-2.5" id="conv-in">
+              <span class="conv-chip glass-soft rounded-lg px-3 py-2 text-[13px] font-medium">PDF</span>
+              <span class="conv-chip glass-soft rounded-lg px-3 py-2 text-[13px] font-medium">DOCX</span>
+              <span class="conv-chip glass-soft rounded-lg px-3 py-2 text-[13px] font-medium">PNG</span>
+              <span class="conv-chip glass-soft rounded-lg px-3 py-2 text-[13px] font-medium">MP4</span>
+            </div>
+            <div class="conv-arrow text-brandBright"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+            <div class="flex flex-col gap-2.5" id="conv-out">
+              <span class="conv-chip2 rounded-lg px-3 py-2 text-[13px] font-semibold text-white" style="background:linear-gradient(180deg,#F01818,#B4000C)">DOCX</span>
+              <span class="conv-chip2 rounded-lg px-3 py-2 text-[13px] font-semibold text-white" style="background:linear-gradient(180deg,#F01818,#B4000C)">MD</span>
+              <span class="conv-chip2 rounded-lg px-3 py-2 text-[13px] font-semibold text-white" style="background:linear-gradient(180deg,#F01818,#B4000C)">JPG</span>
+              <span class="conv-chip2 rounded-lg px-3 py-2 text-[13px] font-semibold text-white" style="background:linear-gradient(180deg,#F01818,#B4000C)">MP3</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feat grid lg:grid-cols-2 gap-8 items-center mb-28">
+        <div class="order-2 lg:order-1 glass rounded-3xl p-5 relative overflow-hidden" data-feat-visual>
+          <div class="relative rounded-2xl overflow-hidden h-64">
+            <div class="checker absolute inset-0"></div>
+            <div id="mq-top" class="absolute inset-0" style="background:radial-gradient(120% 120% at 30% 20%,#3a2f5a,#1a1330);">
+              <div class="absolute inset-0 flex items-center justify-center"><div class="w-28 h-28 rounded-full" style="background:radial-gradient(circle at 40% 35%,#e9c6a0,#9c6b4a)"></div></div>
+            </div>
+            <div id="mq-handle" class="absolute top-0 bottom-0 w-0.5 bg-brandBright" style="left:50%; box-shadow:0 0 18px #F01818;"></div>
+            <span class="absolute bottom-3 left-3 glass-soft rounded-full px-3 py-1 text-[12px]">Background removed</span>
+          </div>
+        </div>
+        <div class="order-1 lg:order-2" data-feat-text>
+          <span class="text-muted text-[13px] font-semibold">02 — MARQUEE</span>
+          <h3 class="font-bold text-[30px] mt-2 mb-3">Image tools that feel like magic</h3>
+          <p class="text-muted text-[16px] leading-relaxed">Remove backgrounds to a clean transparent PNG, upscale to crisp 4K, turn a photo into a text-to-image prompt, or render ASCII art — all running locally on your GPU or CPU.</p>
+        </div>
+      </div>
+
+      <div class="feat grid lg:grid-cols-2 gap-8 items-center mb-28">
+        <div data-feat-text>
+          <span class="text-muted text-[13px] font-semibold">03 — VANGUARD</span>
+          <h3 class="font-bold text-[30px] mt-2 mb-3">Read &amp; analyze text in images</h3>
+          <p class="text-muted text-[16px] leading-relaxed">Estimate whether text is AI-written, pull every line of text out of a screenshot (OCR), or identify the font in an image — the local models do the work, nothing is uploaded.</p>
+        </div>
+        <div class="glass rounded-3xl p-8 relative overflow-hidden" data-feat-visual>
+          <div id="vg-lines" class="space-y-3 relative">
+            <div class="vg-line h-3 rounded-full bg-white/10 w-11/12"></div>
+            <div class="vg-line h-3 rounded-full bg-white/10 w-full"></div>
+            <div class="vg-line h-3 rounded-full bg-white/10 w-10/12"></div>
+            <div class="vg-line h-3 rounded-full bg-white/10 w-full"></div>
+            <div class="vg-line h-3 rounded-full bg-white/10 w-9/12"></div>
+            <div id="vg-scan" class="absolute left-0 right-0 h-10 -top-4 pointer-events-none" style="background:linear-gradient(180deg,transparent,rgba(240,24,24,.28),transparent); box-shadow:0 0 24px rgba(240,24,24,.5);"></div>
+          </div>
+          <div class="mt-6 flex items-center gap-3">
+            <span class="glass-soft rounded-full px-3 py-1.5 text-[12.5px]">AI-likelihood</span>
+            <span class="rounded-full px-3 py-1.5 text-[12.5px] font-semibold text-white" style="background:linear-gradient(180deg,#F01818,#B4000C)">98%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="feat grid lg:grid-cols-2 gap-8 items-center mb-28">
+        <div class="order-2 lg:order-1 glass rounded-3xl p-8 relative overflow-hidden" data-feat-visual>
+          <div class="flex items-end justify-center gap-2 h-28 mb-6" id="eq">
+            <span class="eq-bar" style="height:30%"></span><span class="eq-bar" style="height:65%"></span>
+            <span class="eq-bar" style="height:45%"></span><span class="eq-bar" style="height:90%"></span>
+            <span class="eq-bar" style="height:55%"></span><span class="eq-bar" style="height:75%"></span>
+            <span class="eq-bar" style="height:40%"></span><span class="eq-bar" style="height:85%"></span>
+            <span class="eq-bar" style="height:50%"></span><span class="eq-bar" style="height:70%"></span>
+          </div>
+          <div class="grid grid-cols-2 gap-2.5">
+            <span class="stem glass-soft rounded-lg px-3 py-2 text-[13px] font-medium">Vocals</span>
+            <span class="stem glass-soft rounded-lg px-3 py-2 text-[13px] font-medium">Drums</span>
+            <span class="stem glass-soft rounded-lg px-3 py-2 text-[13px] font-medium">Bass</span>
+            <span class="stem glass-soft rounded-lg px-3 py-2 text-[13px] font-medium">Other</span>
+          </div>
+        </div>
+        <div class="order-1 lg:order-2" data-feat-text>
+          <span class="text-muted text-[13px] font-semibold">04 — SONARA</span>
+          <h3 class="font-bold text-[30px] mt-2 mb-3">Split any song into stems</h3>
+          <p class="text-muted text-[16px] leading-relaxed">Separate vocals, drums, bass and other instruments with state-of-the-art AI, then play them back through a real-time mixer with per-stem mute, solo and volume.</p>
+        </div>
+      </div>
+
+      <div class="feat grid lg:grid-cols-2 gap-8 items-center">
+        <div data-feat-text>
+          <span class="text-muted text-[13px] font-semibold">05 — NEXUS</span>
+          <h3 class="font-bold text-[30px] mt-2 mb-3">Everyday utilities, offline</h3>
+          <p class="text-muted text-[16px] leading-relaxed">Convert currencies, units and time zones, and generate QR codes — the things that are free online but walled behind ads and sign-ins. Here they're instant and private.</p>
+        </div>
+        <div class="grid grid-cols-2 gap-4" data-feat-visual>
+          <div class="nx-card glass rounded-3xl p-6">
+            <p class="text-muted text-[12px]">100 USD =</p>
+            <p class="font-bold text-[26px] mt-1">37.6 <span class="text-muted text-[16px]">BHD</span></p>
+            <div class="mt-3 h-1.5 rounded-full bg-white/10 overflow-hidden"><div class="h-full w-2/3" style="background:linear-gradient(90deg,#F01818,#8C0008)"></div></div>
+          </div>
+          <div class="nx-card glass rounded-3xl p-6 flex items-center justify-center">
+            <div class="grid grid-cols-4 gap-1">
+              <span class="w-4 h-4 bg-ink rounded-sm"></span><span class="w-4 h-4"></span><span class="w-4 h-4 bg-ink rounded-sm"></span><span class="w-4 h-4 bg-ink rounded-sm"></span>
+              <span class="w-4 h-4"></span><span class="w-4 h-4 bg-ink rounded-sm"></span><span class="w-4 h-4"></span><span class="w-4 h-4"></span>
+              <span class="w-4 h-4 bg-ink rounded-sm"></span><span class="w-4 h-4"></span><span class="w-4 h-4 bg-ink rounded-sm"></span><span class="w-4 h-4 bg-ink rounded-sm"></span>
+              <span class="w-4 h-4 bg-ink rounded-sm"></span><span class="w-4 h-4 bg-ink rounded-sm"></span><span class="w-4 h-4"></span><span class="w-4 h-4 bg-ink rounded-sm"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="how" class="py-24">
+      <div class="text-center mb-14" data-reveal>
+        <p class="text-brandBright text-[14px] font-semibold tracking-wide">GET STARTED IN MINUTES</p>
+        <h2 class="font-extrabold text-[34px] sm:text-[46px] tracking-tight mt-2">How it works</h2>
+      </div>
+      <div class="grid md:grid-cols-3 gap-5">
+        <div class="glass rounded-3xl p-7" data-step>
+          <div class="text-brandBright font-bold text-[15px]">STEP 1</div>
+          <h3 class="font-semibold text-[20px] mt-2 mb-2">Download the installer</h3>
+          <p class="text-muted text-[15px] leading-relaxed">One small installer, signed-off and ready for Windows 10 &amp; 11.</p>
+        </div>
+        <div class="glass rounded-3xl p-7" data-step>
+          <div class="text-brandBright font-bold text-[15px]">STEP 2</div>
+          <h3 class="font-semibold text-[20px] mt-2 mb-2">Pick your features</h3>
+          <p class="text-muted text-[15px] leading-relaxed">Choose only the toolboxes you want — install light, add more anytime.</p>
+        </div>
+        <div class="glass rounded-3xl p-7" data-step>
+          <div class="text-brandBright font-bold text-[15px]">STEP 3</div>
+          <h3 class="font-semibold text-[20px] mt-2 mb-2">Done — it's all yours</h3>
+          <p class="text-muted text-[15px] leading-relaxed">Everything runs on your PC. No accounts, no uploads, no limits.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="requirements" class="py-12">
+      <div class="glass rounded-3xl p-8 sm:p-10 grid md:grid-cols-2 gap-8" data-reveal>
+        <div>
+          <h2 class="font-bold text-[28px] tracking-tight mb-4">System requirements</h2>
+          <ul class="space-y-2.5 text-[15px] text-muted">
+            <li><span class="text-ink font-medium">Windows 10 (64-bit) or 11</span></li>
+            <li>8 GB RAM minimum (16 GB recommended for AI tools)</li>
+            <li>NVIDIA GPU optional — the AI tools fall back to CPU automatically</li>
+            <li>No Python, ffmpeg or accounts required — handled for you</li>
+          </ul>
+        </div>
+        <div>
+          <h3 class="font-semibold text-[16px] mb-3">Install only what you need</h3>
+          <div class="space-y-2 text-[14px]">
+            <div class="flex justify-between glass-soft rounded-lg px-3.5 py-2"><span>Core (Converter · Nexus)</span><span class="text-muted">light</span></div>
+            <div class="flex justify-between glass-soft rounded-lg px-3.5 py-2"><span>Marquee · Sonara (AI)</span><span class="text-muted">+ PyTorch</span></div>
+            <div class="flex justify-between glass-soft rounded-lg px-3.5 py-2"><span>Vanguard (AI text)</span><span class="text-muted">lightweight</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="download" class="py-24 text-center">
+      <div class="glass rounded-[2rem] p-10 sm:p-16 relative overflow-hidden" data-reveal>
+        <div class="blob" style="position:absolute;width:340px;height:340px;background:radial-gradient(circle,#E11414,transparent 60%);top:-80px;left:50%;transform:translateX(-50%);opacity:.4;"></div>
+        <div class="relative">
+          <h2 class="font-extrabold text-[34px] sm:text-[50px] tracking-tight">Ready when you are</h2>
+          <p class="text-muted text-[17px] mt-4 max-w-lg mx-auto">Free, open-source, and entirely on your machine. Download and start converting in minutes.</p>
+          <div class="flex flex-wrap items-center justify-center gap-3 mt-9">
+            <a href="https://github.com/Kha73k/Bu-D3eij/releases" class="btn-primary ring-focus rounded-full px-8 py-4 font-semibold text-[16px] text-white flex items-center gap-2">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l4-4m-4 4l-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+              Download for Windows
+            </a>
+            <a href="https://github.com/Kha73k/Bu-D3eij" class="btn-ghost ring-focus glass rounded-full px-6 py-4 font-medium text-[16px]">View source</a>
+          </div>
+          <p class="text-muted text-[12.5px] mt-6">Unsigned build — Windows may show "More info → Run anyway". That's expected.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="py-12 max-w-3xl mx-auto">
+      <h2 class="font-extrabold text-[30px] sm:text-[40px] tracking-tight text-center mb-10" data-reveal>Questions</h2>
+      <div class="space-y-3">
+        <details class="glass rounded-2xl px-5 py-4" data-reveal>
+          <summary class="flex items-center justify-between font-medium text-[16px]">Is it really private?<span class="faq-chev text-muted transition-transform">▾</span></summary>
+          <p class="text-muted text-[15px] mt-3 leading-relaxed">Yes. Every conversion and AI tool runs locally on your PC. Your files are never uploaded anywhere.</p>
+        </details>
+        <details class="glass rounded-2xl px-5 py-4" data-reveal>
+          <summary class="flex items-center justify-between font-medium text-[16px]">Is it free?<span class="faq-chev text-muted transition-transform">▾</span></summary>
+          <p class="text-muted text-[15px] mt-3 leading-relaxed">Completely. It's free and open-source under the MIT license — no ads, no subscriptions, no limits.</p>
+        </details>
+        <details class="glass rounded-2xl px-5 py-4" data-reveal>
+          <summary class="flex items-center justify-between font-medium text-[16px]">Do I need Python, ffmpeg or a GPU?<span class="faq-chev text-muted transition-transform">▾</span></summary>
+          <p class="text-muted text-[15px] mt-3 leading-relaxed">No. The installer sets up everything it needs. A GPU makes the AI tools faster, but they fall back to CPU automatically.</p>
+        </details>
+        <details class="glass rounded-2xl px-5 py-4" data-reveal>
+          <summary class="flex items-center justify-between font-medium text-[16px]">Is my data sent anywhere?<span class="faq-chev text-muted transition-transform">▾</span></summary>
+          <p class="text-muted text-[15px] mt-3 leading-relaxed">Never. The app works fully offline after the AI models download once. Nothing about your files leaves the device.</p>
+        </details>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="border-t border-white/10 mt-16">
+    <div class="max-w-6xl mx-auto px-5 py-10 flex flex-col sm:flex-row items-center justify-between gap-4 text-[14px] text-muted">
+      <div class="flex items-center gap-3">
+        <img src="assets/AppLogo.png" alt="" class="w-7 h-7 rounded-lg" />
+        <span>Bu D3eij — free &amp; open-source · MIT</span>
+      </div>
+      <div class="flex items-center gap-6">
+        <a href="https://github.com/Kha73k/Bu-D3eij" class="hover:text-ink transition">GitHub</a>
+        <a href="changelog.html" class="hover:text-ink transition">Changelog</a>
+        <a href="#top" class="hover:text-ink transition">Back to top</a>
+      </div>
+    </div>
+  </footer>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js"></script>
+  <script>
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduce && window.gsap) {
+      gsap.registerPlugin(ScrollTrigger);
+      const E = 'expo.out';
+
+      gsap.from('[data-hero]', { y: 26, opacity: 0, duration: 1, ease: E, stagger: 0.09, delay: 0.05 });
+      gsap.utils.toArray('.blob').forEach((b, i) => gsap.to(b, { x: i % 2 ? -55 : 55, y: i % 2 ? 45 : -38, duration: 9 + i * 2, repeat: -1, yoyo: true, ease: 'sine.inOut' }));
+      gsap.from('[data-pillar]', { y: 24, opacity: 0, duration: .7, ease: E, stagger: .08, scrollTrigger: { trigger: '[data-pillar]', start: 'top 85%' } });
+      gsap.utils.toArray('[data-reveal]').forEach(el => gsap.from(el, { y: 28, opacity: 0, duration: .8, ease: E, scrollTrigger: { trigger: el, start: 'top 85%' } }));
+      gsap.utils.toArray('[data-step]').forEach((el, i) => gsap.from(el, { y: 30, opacity: 0, duration: .7, ease: E, delay: i * .08, scrollTrigger: { trigger: el, start: 'top 85%' } }));
+
+      gsap.utils.toArray('.feat').forEach(feat => {
+        const text = feat.querySelector('[data-feat-text]');
+        const vis = feat.querySelector('[data-feat-visual]');
+        gsap.from(text, { x: -36, opacity: 0, duration: .9, ease: E, scrollTrigger: { trigger: feat, start: 'top 75%' } });
+        gsap.from(vis, { x: 36, opacity: 0, duration: .9, ease: E, scrollTrigger: { trigger: feat, start: 'top 75%' } });
+      });
+
+      gsap.from('.conv-chip', { x: -20, opacity: 0, rotate: -6, duration: .6, ease: 'back.out(1.7)', stagger: .1, scrollTrigger: { trigger: '#conv-in', start: 'top 80%' } });
+      gsap.from('.conv-chip2', { x: 20, opacity: 0, duration: .6, ease: 'back.out(1.7)', stagger: .1, delay: .25, scrollTrigger: { trigger: '#conv-out', start: 'top 80%' } });
+      gsap.fromTo('.conv-arrow', { x: -8, opacity: .4 }, { x: 8, opacity: 1, duration: 1.1, repeat: -1, yoyo: true, ease: 'sine.inOut' });
+
+      gsap.fromTo('#mq-top', { clipPath: 'inset(0 0% 0 0)' }, { clipPath: 'inset(0 100% 0 0)', ease: 'none', scrollTrigger: { trigger: '#mq-top', start: 'top 75%', end: 'bottom 35%', scrub: true } });
+      gsap.fromTo('#mq-handle', { left: '100%' }, { left: '0%', ease: 'none', scrollTrigger: { trigger: '#mq-top', start: 'top 75%', end: 'bottom 35%', scrub: true } });
+
+      gsap.fromTo('#vg-scan', { top: '-1rem' }, { top: '100%', ease: 'none', scrollTrigger: { trigger: '#vg-lines', start: 'top 80%', end: 'bottom 40%', scrub: true } });
+      gsap.from('.vg-line', { scaleX: 0, transformOrigin: 'left', opacity: 0, duration: .6, ease: E, stagger: .08, scrollTrigger: { trigger: '#vg-lines', start: 'top 80%' } });
+
+      gsap.to('.eq-bar', { scaleY: () => 0.4 + Math.random() * 0.9, transformOrigin: 'bottom', duration: .5, repeat: -1, yoyo: true, ease: 'sine.inOut', stagger: { each: .08, from: 'random' } });
+      gsap.from('.stem', { y: 16, opacity: 0, duration: .5, ease: E, stagger: .1, scrollTrigger: { trigger: '#eq', start: 'top 80%' } });
+
+      gsap.from('.nx-card', { rotationY: 90, opacity: 0, duration: .8, ease: E, stagger: .15, transformOrigin: 'center', scrollTrigger: { trigger: '.nx-card', start: 'top 82%' } });
+    }
+  </script>
+</body>
+</html>

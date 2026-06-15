@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bu D3eij — changelog</title>
+<meta name="description" content="Version history of Bu D3eij — from the first file converter to a full local AI toolkit." />
+<link rel="icon" href="assets/AppLogo.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { theme: { extend: {
+    fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+    colors: { base: '#141011', surface: '#252022', brand: '#E11414', brandBright: '#F01818', brandDeep: '#8C0008', ink: '#F2E9EA', muted: '#9C9194' },
+  } } };
+</script>
+<style>
+  html, body { background: #141011; } body { color: #F2E9EA; font-family: Inter, sans-serif; }
+  .glass { background: rgba(255,255,255,0.05); backdrop-filter: blur(16px) saturate(140%); -webkit-backdrop-filter: blur(16px) saturate(140%); border: 1px solid rgba(255,255,255,0.10); box-shadow: inset 0 1px 0 0 rgba(255,255,255,0.18), 0 12px 40px rgba(0,0,0,0.45); }
+  .glass-soft { background: rgba(255,255,255,0.035); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
+  .btn-ghost { transition: background .2s, border-color .2s; } .btn-ghost:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.22); }
+  .blob { position: fixed; border-radius: 9999px; filter: blur(80px); pointer-events: none; z-index: 0; }
+  .ring-focus:focus-visible { outline: 2px solid #F01818; outline-offset: 3px; border-radius: 9999px; }
+  .vtag { background: linear-gradient(180deg,#F01818,#B4000C); }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body class="antialiased overflow-x-hidden">
+
+  <div class="blob" style="width:520px;height:520px;background:radial-gradient(circle,#E11414,transparent 60%);top:-160px;left:-140px;opacity:.45;"></div>
+  <div class="blob" style="width:400px;height:400px;background:radial-gradient(circle,#8C0008,transparent 60%);top:60%;right:-150px;opacity:.3;"></div>
+
+  <div class="relative z-10 max-w-3xl mx-auto px-5">
+
+    <nav class="glass rounded-2xl mt-5 px-4 sm:px-5 py-3 flex items-center justify-between">
+      <a href="index.html" class="flex items-center gap-3">
+        <img src="assets/AppLogo.png" alt="Bu D3eij logo" class="w-9 h-9 rounded-xl" />
+        <span class="font-semibold tracking-tight text-[17px]">Bu D3eij</span>
+      </a>
+      <a href="index.html" class="btn-ghost ring-focus glass-soft rounded-full px-4 py-2 text-[14px] font-medium">← Home</a>
+    </nav>
+
+    <header class="pt-16 pb-12 text-center">
+      <p class="text-brandBright text-[14px] font-semibold tracking-wide">VERSION HISTORY</p>
+      <h1 class="font-extrabold text-[40px] sm:text-[54px] tracking-tight mt-2">Changelog</h1>
+      <p class="text-muted text-[16px] mt-4 max-w-lg mx-auto">From a simple file converter to a full local AI toolkit — here's how Bu D3eij grew.</p>
+    </header>
+
+    <div class="relative pl-6 sm:pl-8 pb-24 border-l border-white/10 space-y-5" id="log">
+
+      <article class="glass rounded-2xl p-6 relative" data-log>
+        <span class="absolute -left-[31px] sm:-left-[39px] top-7 w-3.5 h-3.5 rounded-full vtag ring-4 ring-base"></span>
+        <div class="flex items-center gap-3 mb-1.5"><span class="vtag text-white text-[12.5px] font-bold rounded-full px-2.5 py-0.5">v4.3</span><span class="text-muted text-[13px]">Marquee grows again</span></div>
+        <h2 class="font-semibold text-[19px]">Image → Prompt &amp; ASCII Art</h2>
+        <p class="text-muted text-[15px] mt-1.5 leading-relaxed">Turn any image into a detailed text-to-image prompt, or render it as ASCII art — both local, both free.</p>
+      </article>
+
+      <article class="glass rounded-2xl p-6 relative" data-log>
+        <span class="absolute -left-[31px] sm:-left-[39px] top-7 w-3.5 h-3.5 rounded-full vtag ring-4 ring-base"></span>
+        <div class="flex items-center gap-3 mb-1.5"><span class="vtag text-white text-[12.5px] font-bold rounded-full px-2.5 py-0.5">v4.2</span><span class="text-muted text-[13px]">New section</span></div>
+        <h2 class="font-semibold text-[19px]">Nexus — everyday utilities</h2>
+        <p class="text-muted text-[15px] mt-1.5 leading-relaxed">Offline currency, unit &amp; time-zone converters, plus a QR-code generator — no ads, no sign-ins.</p>
+      </article>
+
+      <article class="glass rounded-2xl p-6 relative" data-log>
+        <span class="absolute -left-[31px] sm:-left-[39px] top-7 w-3.5 h-3.5 rounded-full vtag ring-4 ring-base"></span>
+        <div class="flex items-center gap-3 mb-1.5"><span class="vtag text-white text-[12.5px] font-bold rounded-full px-2.5 py-0.5">v4.1</span><span class="text-muted text-[13px]">GPU upgrade</span></div>
+        <h2 class="font-semibold text-[19px]">Sharper image AI</h2>
+        <p class="text-muted text-[15px] mt-1.5 leading-relaxed">The upscaler moved to UltraSharp V2 and the background remover gained a BiRefNet-HR tier that keeps individual hair strands.</p>
+      </article>
+
+      <article class="glass rounded-2xl p-6 relative" data-log>
+        <span class="absolute -left-[31px] sm:-left-[39px] top-7 w-3.5 h-3.5 rounded-full vtag ring-4 ring-base"></span>
+        <div class="flex items-center gap-3 mb-1.5"><span class="vtag text-white text-[12.5px] font-bold rounded-full px-2.5 py-0.5">v4.0</span><span class="text-muted text-[13px]">New section</span></div>
+        <h2 class="font-semibold text-[19px]">Sonara — audio stem splitter</h2>
+        <p class="text-muted text-[15px] mt-1.5 leading-relaxed">Split songs into vocals, drums, bass &amp; other with a real-time 4-stem mixer. The app's first GPU-accelerated tool.</p>
+      </article>
+
+      <article class="glass rounded-2xl p-6 relative" data-log>
+        <span class="absolute -left-[31px] sm:-left-[39px] top-7 w-3.5 h-3.5 rounded-full vtag ring-4 ring-base"></span>
+        <div class="flex items-center gap-3 mb-1.5"><span class="vtag text-white text-[12.5px] font-bold rounded-full px-2.5 py-0.5">v3.2</span><span class="text-muted text-[13px]">Vanguard expands</span></div>
+        <h2 class="font-semibold text-[19px]">Text extraction &amp; font ID</h2>
+        <p class="text-muted text-[15px] mt-1.5 leading-relaxed">OCR every line out of a screenshot, or identify the font in an image — added alongside the AI text detector.</p>
+      </article>
+
+      <article class="glass rounded-2xl p-6 relative" data-log>
+        <span class="absolute -left-[31px] sm:-left-[39px] top-7 w-3.5 h-3.5 rounded-full vtag ring-4 ring-base"></span>
+        <div class="flex items-center gap-3 mb-1.5"><span class="vtag text-white text-[12.5px] font-bold rounded-full px-2.5 py-0.5">v3.0</span><span class="text-muted text-[13px]">New section</span></div>
+        <h2 class="font-semibold text-[19px]">Vanguard — AI text detector</h2>
+        <p class="text-muted text-[15px] mt-1.5 leading-relaxed">Estimate how likely a piece of text is AI-generated, with sentence-level highlighting — running entirely on-device.</p>
+      </article>
+
+      <article class="glass rounded-2xl p-6 relative" data-log>
+        <span class="absolute -left-[31px] sm:-left-[39px] top-7 w-3.5 h-3.5 rounded-full vtag ring-4 ring-base"></span>
+        <div class="flex items-center gap-3 mb-1.5"><span class="vtag text-white text-[12.5px] font-bold rounded-full px-2.5 py-0.5">v2.0</span><span class="text-muted text-[13px]">New section</span></div>
+        <h2 class="font-semibold text-[19px]">Marquee — image editing</h2>
+        <p class="text-muted text-[15px] mt-1.5 leading-relaxed">The first AI image tool: a background remover that exports a clean transparent PNG. The upscaler followed soon after.</p>
+      </article>
+
+      <article class="glass rounded-2xl p-6 relative" data-log>
+        <span class="absolute -left-[31px] sm:-left-[39px] top-7 w-3.5 h-3.5 rounded-full vtag ring-4 ring-base"></span>
+        <div class="flex items-center gap-3 mb-1.5"><span class="vtag text-white text-[12.5px] font-bold rounded-full px-2.5 py-0.5">v1.0</span><span class="text-muted text-[13px]">The beginning</span></div>
+        <h2 class="font-semibold text-[19px]">The file converter</h2>
+        <p class="text-muted text-[15px] mt-1.5 leading-relaxed">Where it started: drag-and-drop conversion for documents, images, audio and video, with a Recent-history store.</p>
+      </article>
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js"></script>
+  <script>
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduce && window.gsap) {
+      gsap.registerPlugin(ScrollTrigger);
+      gsap.utils.toArray('[data-log]').forEach(el => gsap.from(el, { x: 24, opacity: 0, duration: .7, ease: 'expo.out', scrollTrigger: { trigger: el, start: 'top 88%' } }));
+    }
+  </script>
+</body>
+</html>
