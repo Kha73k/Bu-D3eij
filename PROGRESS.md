@@ -48,9 +48,14 @@ Architecture + dependency contract for the public build (tracked in `PHASES.md`)
   (dev "everything" install unchanged). Verified the graph resolves to 29
   packages = all 28 originals + explicit `PyYAML` (was transitive). Mapping
   cross-checked against the actual lazy imports in each `bud3eij/` module.
-- **Next in Phase 1:** UI feature-gating (hide a page when its group isn't
-  installed), the embedded-Python + pip-bootstrap implementation, torch pinning,
-  and a GitHub Releases pipeline.
+- **Feature-gating (`bud3eij/features.py`):** the GUI now hides a nav section +
+  the Home quick-action whose feature group isn't installed, detected via
+  `importlib.util.find_spec` on sentinel packages (fast — no heavy import) — so a
+  Core-only install launches clean instead of crashing on a click. `show_frame`
+  guards stray navigations. Tested: GUI smoke 112/0 (+3 gating checks) + headless
+  `[11]`.
+- **Next in Phase 1:** the embedded-Python + pip-bootstrap implementation (the
+  installer itself), torch version pinning, and a GitHub Releases pipeline.
 
 ### 2026-06-15 — Public-launch prep, Phase 0 (repo readiness)
 First phase of the GitHub public-launch roadmap (see `project-launch-plan.md` on

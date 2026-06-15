@@ -408,5 +408,23 @@ check("celebration spawns confetti", len(a.vg_btn._particles) > 0)
 a.update()
 a.after(200, a.destroy)
 a.mainloop()
+
+# launch prep: feature-gating hides a section whose deps aren't installed.
+_real_section = app.section_available
+app.section_available = lambda s: False if s == "Sonara" else _real_section(s)
+try:
+    b = app.App()
+    b.update()
+    check("gating hides unavailable nav section", "Sonara" not in b.nav_buttons,
+          sorted(b.nav_buttons))
+    check("gating keeps core + available sections",
+          {"Converter", "Marquee", "Vanguard", "Nexus", "Tools"} <= set(b.nav_buttons))
+    b.show_frame("Sonara")
+    check("show_frame no-ops on a gated section", "Sonara" not in b.frames)
+    b.after(150, b.destroy)
+    b.mainloop()
+finally:
+    app.section_available = _real_section
+
 print(f"\n==== {PASS} passed, {FAIL} failed ====")
 raise SystemExit(1 if FAIL else 0)

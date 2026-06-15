@@ -457,5 +457,20 @@ loaded = app.load_history()
 app.HISTORY_FILE = orig
 check("malformed entries dropped", loaded == [{"ok": True, "output": "x"}], str(loaded))
 
+print("\n[11] feature-gating detection")
+from bud3eij import features as _F  # noqa: E402
+check("core section always available", _F.section_available("Converter") is True)
+check("optional sections available in dev", all(
+    _F.section_available(s) for s in ("Marquee", "Vanguard", "Sonara")))
+_real_inst = _F._installed
+_F._installed = lambda m: False  # simulate a Core-only install
+try:
+    check("group hidden when sentinel missing", _F.feature_available("marquee") is False)
+    check("gated section hidden", _F.section_available("Sonara") is False)
+    check("core unaffected when stubbed", _F.section_available("Nexus") is True)
+    check("unknown group treated as core", _F.feature_available("") is True)
+finally:
+    _F._installed = _real_inst
+
 print(f"\n==== {PASS} passed, {FAIL} failed ====")
 sys.exit(1 if FAIL else 0)

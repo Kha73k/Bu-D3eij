@@ -971,7 +971,16 @@ bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
   nexus.py        currency/units/timezone converters + QR builders (Nexus, v4.2)
   imageprompt.py  image_to_prompt + PROMPT_MODES (Marquee Image → Prompt, Qwen2-VL, v4.3)
   asciiart.py     image_to_ascii + save_ascii (Marquee ASCII Art, pure PIL/numpy, v4.3)
-requirements.txt  runtime deps (pyinstaller is dev-only, installed separately)
+  features.py     feature-group availability detection (find_spec) for the
+                  installer feature-gating — hides a nav section whose deps
+                  aren't installed (launch prep, 2026-06-15)
+requirements.txt  composes the per-feature requirements/ split (dev = everything)
+requirements/     per-feature dependency split (base/marquee/vanguard/sonara +
+                  torch-cpu/cuda) the installer composes — see requirements/README.md
+docs/DISTRIBUTION.md  the public-launch distribution architecture (installer-builds-env)
+PHASES.md         public-launch phase tracker (companion to PROGRESS.md)
+THIRD_PARTY.md    third-party library + model license notices (incl. PyMuPDF AGPL,
+                  UltraSharp CC-BY-NC-SA); LICENSE is MIT; SYSTEM_REQUIREMENTS.md
 README.md         user-facing docs
 CLAUDE.md         this file
 PROGRESS.md       running work log

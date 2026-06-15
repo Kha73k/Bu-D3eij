@@ -49,7 +49,8 @@ A reliable, downloadable build + model/dependency delivery.
   ([`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md))
 - [x] Resolve the PyMuPDF/AGPL call → accept on the binary
 - [x] Feature → dependency contract (`requirements/` split + composed root)
-- [ ] UI feature-gating (hide/disable a page when its group isn't installed)
+- [x] UI feature-gating — `bud3eij/features.py` hides a nav section + Home
+  quick-action when its group isn't installed (find_spec sentinels; tested)
 - [ ] Bundle/launch implementation (embedded Python + app source + pip bootstrap)
 - [ ] Pin torch versions for reproducible installs
 - [ ] GitHub Releases pipeline (tag → artifact)

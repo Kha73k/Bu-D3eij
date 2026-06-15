@@ -98,6 +98,11 @@ from bud3eij.sonara import (  # noqa: F401
     split_stems,
 )
 from bud3eij.stemplayer import StemPlayer  # noqa: F401
+from bud3eij.features import (  # noqa: F401
+    available_features,
+    feature_available,
+    section_available,
+)
 from bud3eij.nexus import (  # noqa: F401
     COMMON_TIMEZONES,
     CURRENCY_NAMES,
@@ -1339,7 +1344,11 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def _build_sidebar(self):
         sidebar = ctk.CTkFrame(self, width=200, corner_radius=0, fg_color=SIDEBAR_FG)
         sidebar.grid(row=0, column=0, sticky="nsew")
-        sidebar.grid_rowconfigure(len(NAV_ITEMS) + 1, weight=1)
+        # Feature-gating: hide optional sections whose dependencies aren't installed
+        # (a feature-selective install may omit Marquee/Vanguard/Sonara). Core is
+        # always shown; a dev install has everything. See bud3eij/features.py.
+        self.nav_items = [n for n in NAV_ITEMS if section_available(n)]
+        sidebar.grid_rowconfigure(len(self.nav_items) + 1, weight=1)
 
         header = ctk.CTkFrame(sidebar, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", padx=12, pady=(20, 14))
@@ -1352,7 +1361,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             ).pack(anchor="w")
 
         self.nav_buttons: dict[str, ctk.CTkButton] = {}
-        for i, name in enumerate(NAV_ITEMS, start=1):
+        for i, name in enumerate(self.nav_items, start=1):
             btn = ctk.CTkButton(
                 sidebar, text="  " + name, anchor="w", height=40, corner_radius=8,
                 image=self._ui_icon(NAV_ICONS[name], 18), compound="left",
@@ -1371,7 +1380,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             hover_color=RED_HOVER, text_color=NAV_TEXT,
             command=self._toggle_appearance,
         )
-        self.theme_toggle.grid(row=len(NAV_ITEMS) + 2, column=0, padx=15, pady=20, sticky="s")
+        self.theme_toggle.grid(row=len(self.nav_items) + 2, column=0, padx=15, pady=20, sticky="s")
 
     def _build_frames(self):
         # The page host scrolls when the window is shrunk below a page's height
@@ -1418,6 +1427,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.destroy()
 
     def show_frame(self, name: str):
+        # Guard: a feature-gated section that isn't installed has no nav button;
+        # ignore stray navigations to it (e.g. a Home quick-action). See features.py.
+        if not section_available(name):
+            return
         frame = self.frames.get(name)
         if frame is None:
             # First visit — build the frame now (lazy; see _build_frames).
@@ -1662,21 +1675,19 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
             command=lambda: self.show_frame("YouTube"),
         ).pack(side="left")
-        # Second row: the newer sections deserve a front-door too.
+        # Second row: front-doors for the optional sections — only those whose
+        # feature group is installed (see feature-gating in _build_sidebar).
         actions2 = ctk.CTkFrame(text, fg_color="transparent")
         actions2.pack(anchor="w", pady=(10, 0))
-        ctk.CTkButton(
-            actions2, text=" Marquee", height=42, image=self._ui_icon("sparkles", 18),
-            compound="left", fg_color="transparent", border_width=2, border_color=RED,
-            text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
-            command=lambda: self.show_frame("Marquee"),
-        ).pack(side="left", padx=(0, 10))
-        ctk.CTkButton(
-            actions2, text=" Vanguard", height=42, image=self._ui_icon("shield-check", 18),
-            compound="left", fg_color="transparent", border_width=2, border_color=RED,
-            text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
-            command=lambda: self.show_frame("Vanguard"),
-        ).pack(side="left")
+        for sect, icon in (("Marquee", "sparkles"), ("Vanguard", "shield-check")):
+            if not section_available(sect):
+                continue
+            ctk.CTkButton(
+                actions2, text=f" {sect}", height=42, image=self._ui_icon(icon, 18),
+                compound="left", fg_color="transparent", border_width=2, border_color=RED,
+                text_color=TEXT, hover_color=("#F1DDDD", "#2E2A2C"),
+                command=lambda s=sect: self.show_frame(s),
+            ).pack(side="left", padx=(0, 10))
 
         cluster = ctk.CTkFrame(hero, fg_color="transparent")
         cluster.grid(row=0, column=1, padx=(8, 26), pady=20, sticky="e")
