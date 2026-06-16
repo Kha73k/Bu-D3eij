@@ -91,14 +91,15 @@ theme** (dark + red + Inter), **landing + changelog**, hosted free on **GitHub P
   `main`) → https://bu-d3eij.khalifaarefalhashel.workers.dev
 - [ ] Compile Tailwind to drop the CDN (optional polish)
 
-### Phase 4 — Polish & launch ⏳ IN PROGRESS
+### Phase 4 — Polish & launch ✅ LAUNCHED (2026-06-16)
 - [x] Clean-VM cold-start test (done in Phase 2 — Windows Sandbox)
 - [x] Public **README** rewrite (`README.md`) — installer-first, value-prop led
 - [ ] `CONTRIBUTING` + issue templates (optional)
 - [x] Deploy the site → live on **Cloudflare**, free (sidesteps the Actions billing
   lock): https://bu-d3eij.khalifaarefalhashel.workers.dev
-- [ ] Publish a release (manual: build locally + attach the exe)
-- [ ] Flip repo public → announce
+- [x] Publish a release → **v4.3.2** with `BuD3eij-Setup.exe` (~30 MB, built via Inno Setup)
+- [x] Flip repo **public** — https://github.com/Kha73k/Bu-D3eij
+- [ ] Announce (optional) · post-launch polish: real screenshots, custom domain, compile Tailwind
 
 ## Decision log
 - **2026-06-15** — Locked the five decisions above; chose Hugging Face to host the

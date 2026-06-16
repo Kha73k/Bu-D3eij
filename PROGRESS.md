@@ -31,6 +31,17 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 
 ## Completed
 
+### 2026-06-16 — 🚀 Public launch
+Bu D3eij is live. Repo flipped to **public** (https://github.com/Kha73k/Bu-D3eij),
+release **v4.3.2** published with `BuD3eij-Setup.exe` (~30 MB — built locally via
+Inno Setup 7 from `installer/build.ps1` + `installer/bud3eij.iss`), and the
+marketing site live + free on **Cloudflare**
+(https://bu-d3eij.khalifaarefalhashel.workers.dev), whose Download button resolves
+to `releases/latest`. Phases 0–4 complete. Optional post-launch polish: real
+screenshots for the site, a custom domain, compiling Tailwind to drop the CDN, and
+re-enabling the `release.yml` CI workflow if/when the account's Actions billing is
+restored.
+
 ### 2026-06-15 — Public-launch prep: bundle the VC++ C++ runtime for onnxruntime
 Second clean-machine fix from VM testing: with SSL fixed, Vanguard's detector then
 failed with *"DLL load failed while importing onnxruntime_pybind11_state: The
