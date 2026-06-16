@@ -9,8 +9,9 @@ refining the design, then deploy.**
 - **Theme:** match the app — **dark-first, logo-red accent, Inter**, **iOS liquid-glass**
   (glassmorphism) surfaces.
 - **Scope (v1):** a **landing page + a changelog page**.
-- **Hosting:** **GitHub Pages** (free) from this repo → `https://kha73k.github.io/Bu-D3eij`
-  (custom domain optional later; ~$10–12/yr is the only possible cost, not required).
+- **Hosting:** **Cloudflare** (free; serves `website/`, works on the private repo,
+  auto-deploys on push to `main`) → `https://bu-d3eij.khalifaarefalhashel.workers.dev`
+  (custom domain optional later).
 - **Deploy:** GitHub Actions → Pages from a `website/` folder (no manual branch juggling).
 
 ## Hosting / deploy

@@ -87,13 +87,16 @@ theme** (dark + red + Inter), **landing + changelog**, hosted free on **GitHub P
 - [x] Build landing (`website/index.html`) + changelog (`website/changelog.html`) —
   glass UI, signature per-feature GSAP animations, reduced-motion safe (CDN preview)
 - [ ] Replace placeholder tool mocks with real screenshots/GIFs
-- [ ] Compile Tailwind (drop the CDN) + GitHub Pages deploy; wire Download CTA → Release
+- [x] Deployed free on **Cloudflare** (serves `website/`, auto-deploys on push to
+  `main`) → https://bu-d3eij.khalifaarefalhashel.workers.dev
+- [ ] Compile Tailwind to drop the CDN (optional polish)
 
 ### Phase 4 — Polish & launch ⏳ IN PROGRESS
 - [x] Clean-VM cold-start test (done in Phase 2 — Windows Sandbox)
 - [x] Public **README** rewrite (`README.md`) — installer-first, value-prop led
 - [ ] `CONTRIBUTING` + issue templates (optional)
-- [ ] Deploy the site (Cloudflare Pages — free, sidesteps the Actions billing lock)
+- [x] Deploy the site → live on **Cloudflare**, free (sidesteps the Actions billing
+  lock): https://bu-d3eij.khalifaarefalhashel.workers.dev
 - [ ] Publish a release (manual: build locally + attach the exe)
 - [ ] Flip repo public → announce
 

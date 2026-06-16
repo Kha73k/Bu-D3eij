@@ -14,8 +14,8 @@ nothing uploaded.**
 [![Download](https://img.shields.io/badge/download-latest%20release-E11414)](https://github.com/Kha73k/Bu-D3eij/releases/latest)
 
 [**Download for Windows**](https://github.com/Kha73k/Bu-D3eij/releases/latest) ·
-[Website](https://kha73k.github.io/Bu-D3eij) ·
-[Changelog](https://kha73k.github.io/Bu-D3eij/changelog.html)
+[Website](https://bu-d3eij.khalifaarefalhashel.workers.dev) ·
+[Changelog](https://bu-d3eij.khalifaarefalhashel.workers.dev/changelog.html)
 
 </div>
 
