@@ -1,8 +1,11 @@
 name: Build installer
 
+# NOTE: running this needs GitHub Actions billing to be active. While the account's
+# Actions billing is locked, releases are cut MANUALLY (see installer/README.md ->
+# "Releasing"). This workflow is kept ready for when Actions is available again:
+# dispatch it manually, or re-add a `push: tags: ['v*']` trigger to auto-build on a
+# version tag. (Left as workflow_dispatch only so release tags don't spawn failed runs.)
 on:
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:

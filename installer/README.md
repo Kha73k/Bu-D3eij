@@ -73,4 +73,15 @@ Prereq: [Inno Setup 6](https://jrsoftware.org/isinfo.php) (free) on the build PC
 - Confirm the `python-build-standalone` release tag in `build.ps1` is current.
 - UI feature-gating already lands in the app (`bud3eij/features.py`), so an env
   missing a group hides that section automatically.
-- Then Phase 1's GitHub Releases pipeline can publish `BuD3eij-Setup.exe`.
+- Publishing a release: see **Releasing** below (manual for now — the CI workflow in
+  `.github/workflows/release.yml` is dormant while the account's Actions billing is locked).
+
+## Releasing (manual)
+1. `pwsh installer\build.ps1` — re-stage the latest app source + Python.
+2. Compile `installer\bud3eij.iss` in Inno Setup (F9) → `installer\dist\BuD3eij-Setup.exe`.
+3. On GitHub: **Releases → Draft a new release** → create a tag (e.g. `v4.3.2`), add
+   notes, **attach `BuD3eij-Setup.exe`**, then Publish. The website's Download button
+   points at the repo's Releases page, so this is all it needs.
+
+When Actions billing is restored, `release.yml` can do all three on a `v*` tag —
+re-add its `push: tags: ['v*']` trigger.

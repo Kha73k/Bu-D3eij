@@ -53,7 +53,9 @@ A reliable, downloadable build + model/dependency delivery.
   quick-action when its group isn't installed (find_spec sentinels; tested)
 - [ ] Bundle/launch implementation (embedded Python + app source + pip bootstrap)
 - [x] Pin torch versions (2.12.0 / 2.11.0 / 0.27.0; cpu + cu126 wheels verified)
-- [ ] GitHub Releases pipeline (tag → artifact)
+- [~] Release pipeline: CI workflow written (`.github/workflows/release.yml`) but
+  **dormant — the account's Actions billing is locked**; releases are **manual** for
+  now (build locally + attach the exe to a GitHub Release — see installer/README.md)
 - Depends on: Phase 0. (ML model weights already download on demand in the app.)
 
 ### Phase 2 — Feature-selective installer ⏳ IN PROGRESS
