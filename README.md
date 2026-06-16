@@ -1,246 +1,130 @@
-# Bu D3eij — Desktop File Converter
+<div align="center">
 
-A simple, clean Windows desktop app for converting documents, images, and
-audio/video files. Built with Python + [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter)
-and native drag-and-drop via [tkinterdnd2](https://github.com/pmgagne/tkinterdnd2).
+<img src="DashboardLogo.png" alt="Bu D3eij" width="280" />
 
-Drag a file in, pick a target format, click **Convert Now** — the output is
-saved right next to the original.
+### Convert anything. Create anything. **On your PC.**
+
+A free, open-source Windows app that converts your documents, images, audio and
+video — and adds local AI tools for background removal, upscaling, OCR, stem
+splitting and more. **Everything runs on your machine: no accounts, no limits,
+nothing uploaded.**
+
+[![License: MIT](https://img.shields.io/badge/license-MIT-E11414)](LICENSE)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-444)](#system-requirements)
+[![Download](https://img.shields.io/badge/download-latest%20release-E11414)](https://github.com/Kha73k/Bu-D3eij/releases/latest)
+
+[**Download for Windows**](https://github.com/Kha73k/Bu-D3eij/releases/latest) ·
+[Website](https://kha73k.github.io/Bu-D3eij) ·
+[Changelog](https://kha73k.github.io/Bu-D3eij/changelog.html)
+
+</div>
+
+---
+
+## Why Bu D3eij
+
+- **100% local & private** — your files never leave your PC.
+- **No accounts, no limits** — no sign-ups, no file-size caps, no subscriptions.
+- **Free & open-source** — MIT licensed.
+- **Install only what you want** — the installer is feature-selective; start light, add more anytime.
 
 ## Features
 
-- Drag & drop (or click to browse) a file onto the upload zone
-- Auto-detects the input format and only offers compatible output formats
-- Single-file **Converter** and a multi-file **Batch Convert** view
-- **YouTube** tab: paste a link and download it as MP4 (video) or MP3 (audio)
-- **Marquee** tab (image editing): **Background Remover** (transparent PNG, three
-  quality tiers — the Omega tier runs BiRefNet-HR on the GPU for hair-strand
-  precision), **Image Upscaler** (UltraSharp V2 on the GPU, to exact
-  1080p / 2K / 4K), **Image → Prompt** (describe any image as a detailed
-  text-to-image prompt — Qwen2-VL on the GPU, fully offline, copy to clipboard)
-  and **ASCII Art** (turn an image into ASCII, with adjustable width, invert and
-  colour, exported as `.txt` or a rendered `.png`)
-- **Vanguard** tab (AI text tools): **AI Text Detector** (estimate how likely a
-  text is AI-generated, with flagged passages), **Text Extraction** (offline OCR
-  of any screenshot/photo, with copy-to-clipboard), and **What's The Font**
-  (closest Google-Font matches for the lettering in an image)
-- **Sonara** tab (audio tools): **Audio Stem Splitter** — split any song into
-  **Vocals / Drums / Bass / Other** (Demucs `htdemucs_ft`, GPU-accelerated),
-  then mix them live in the built-in player (play/pause, seek, per-stem
-  mute/solo/volume) and save just the stems you want (WAV or MP3)
-- **Nexus** tab (everyday utilities, 100% local — no account, no limits):
-  **Converter** (live **currency** conversion on ECB rates that work offline and
-  refresh on demand — with full-name, type-to-search dropdowns and the USD-pegged
-  Gulf currencies BHD/AED/SAR/QAR/OMR included — **units** across 11 categories,
-  and **time zones** with a type-to-search picker and a world clock) and a
-  **QR Code** generator (Text/URL, Wi-Fi, Email, Phone, SMS, vCard, Geo — with
-  colours, error-correction, a centre logo, and PNG/SVG export)
-- **Recent** tab: persistent history of your conversions with one-click *Open* / *Folder*
-- Progress indicator with clear success / error messages
-- A **Clear/Reset** button on every tool page to start fresh
-- **Resizes gracefully** — shrink the window and pages scroll (mouse wheel + scrollbar) instead of clipping
-- Logo-derived red theme with a sun/moon toggle to switch Light / Dark
-- Optional headless mode: `python app.py --convert photo.png jpg`
+- **Converter** — documents, images, audio & video. Drag, drop, done. Plus a
+  multi-file **Batch Convert** and a **YouTube** downloader (MP4 / MP3).
+- **Marquee** (image tools) — **Background Remover** (transparent PNG, up to
+  hair-strand precision), **Image Upscaler** (to exact 1080p / 2K / 4K),
+  **Image → Prompt** (describe a photo as a text-to-image prompt), and **ASCII Art**.
+- **Vanguard** (AI text tools) — **AI Text Detector**, **Text Extraction** (offline
+  OCR), and **What's The Font** (closest Google-Font matches).
+- **Sonara** (audio) — **Stem Splitter**: split any song into vocals / drums / bass /
+  other, then mix them live (mute / solo / volume) and save the stems you want.
+- **Nexus** (utilities) — offline **currency / unit / time-zone** converters and a
+  **QR-code** generator (Wi-Fi, vCard, email, geo, …).
+- **Recent** history, a **Clear/Reset** on every tool, light/dark theme, and a
+  headless command-line mode.
 
 ### Supported conversions
 
 | Category      | Conversions |
 |---------------|-------------|
-| Documents     | PDF ↔ DOCX, PDF → TXT, PDF → MD, DOCX → TXT, DOCX → PDF, DOCX → MD |
+| Documents     | PDF ↔ DOCX, PDF → TXT, PDF → MD, DOCX → TXT, DOCX → PDF, DOCX → MD, TXT → PDF/DOCX/MD |
 | Presentations | PPTX → MD, PPTX → PDF, PPTX → TXT |
-| Images        | JPG ↔ PNG, PNG/JPG → WEBP, and swaps between JPG, PNG, WEBP, BMP, GIF, TIFF |
+| Images        | swaps between JPG, PNG, WEBP, BMP, GIF, TIFF |
 | Audio/Video   | MP4 → MP3, MP4 → WAV, MP3 → WAV, WAV → MP3 |
 | YouTube       | URL → MP4 (best video+audio), URL → MP3 (192 kbps) |
 
-> Markdown (`.md`) is an output format only. PowerPoint support is for modern
-> `.pptx` files (legacy `.ppt` is not supported). Downloading copyrighted
-> content may breach YouTube's Terms of Service — download only what you may.
+> Markdown (`.md`) is output-only. PowerPoint support is for modern `.pptx`.
+> Download only YouTube content you have the right to.
 
-## Requirements
+## Download & install
 
-- **Python 3.11** — install with `winget install Python.Python.3.11`
-  (or from [python.org](https://www.python.org/downloads/release/python-3119/)).
-- **ffmpeg** — required for the audio/video conversions **and YouTube downloads**.
-- **Microsoft Word** *(optional)* — enables high-fidelity **DOCX → PDF**.
-  Without Word, the app automatically falls back to a text-only PDF.
-- **Microsoft PowerPoint** *(optional)* — enables high-fidelity **PPTX → PDF**.
-  Without PowerPoint, the app automatically falls back to a text-only PDF.
+1. Download the latest **`BuD3eij-Setup.exe`** from the
+   [Releases page](https://github.com/Kha73k/Bu-D3eij/releases/latest).
+2. Run it. The build is **unsigned**, so Windows SmartScreen may say *"Windows
+   protected your PC"* — click **More info → Run anyway**.
+3. Choose the features you want. The installer sets everything up for you —
+   **no Python and no ffmpeg to install yourself**.
 
-## Install
+The first time you use an AI tool, its model downloads once (then it works
+offline). Sizes are listed in [SYSTEM_REQUIREMENTS.md](SYSTEM_REQUIREMENTS.md).
 
-From the project folder (`Bu D3eij`):
+## System requirements
+
+- **Windows 10 (64-bit) or 11**
+- 8 GB RAM (16 GB recommended for the AI tools)
+- An **NVIDIA GPU is optional** — the AI tools run on it when present and fall
+  back to CPU automatically.
+
+Full details + per-feature download sizes: [SYSTEM_REQUIREMENTS.md](SYSTEM_REQUIREMENTS.md).
+
+## Privacy
+
+Bu D3eij is **fully local**. Conversions and AI tools run on your own machine;
+your files are never uploaded. The only network use is the one-time download of
+an AI model from its open-source host (e.g. Hugging Face) the first time you use
+the tool that needs it, and the optional currency-rate refresh. No telemetry, no
+accounts, no usage limits.
+
+## Build / run from source (developers)
+
+Requires **Python 3.11**. PyTorch installs from the PyTorch index (CPU by
+default; CUDA for NVIDIA GPUs makes the AI tools much faster):
 
 ```powershell
-# 1. Create and activate a virtual environment (Python 3.11)
 py -3.11 -m venv .venv
-.\.venv\Scripts\activate
-
-# 2. Install PyTorch first (CUDA build for NVIDIA GPUs — strongly recommended
-#    for the Sonara stem splitter; without it a CPU build is used, ~20x slower)
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu126
-
-# 3. Install the rest of the Python dependencies
-pip install -r requirements.txt
-```
-
-### Install ffmpeg
-
-Easiest (Windows Package Manager):
-
-```powershell
-winget install Gyan.FFmpeg
-```
-
-Or download a build manually from
-[gyan.dev/ffmpeg/builds](https://www.gyan.dev/ffmpeg/builds/) or
-[ffmpeg.org/download.html](https://ffmpeg.org/download.html), then add its
-`bin` folder to your `PATH`.
-
-Verify it is on your PATH (open a **new** terminal after installing):
-
-```powershell
-ffmpeg -version
-```
-
-## Run
-
-With the virtual environment active:
-
-```powershell
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements/torch-cpu.txt    # or torch-cuda.txt for an NVIDIA GPU
+pip install -r requirements.txt              # everything (dev install)
 python app.py
 ```
 
-### Headless / command-line
+- The dependency split is per-feature — see [requirements/README.md](requirements/README.md).
+- ffmpeg auto-downloads on first audio/video use; nothing to install.
+- Building the **installer**: [installer/README.md](installer/README.md).
+- Architecture / internals: [CLAUDE.md](CLAUDE.md).
 
-Convert a single file, or download a video, without opening the window:
-
-```powershell
-python app.py --convert "C:\path\to\photo.png" jpg
-python app.py --download "https://www.youtube.com/watch?v=…" mp3   # saves to the current folder
-python app.py --remove-bg "C:\path\photo.png"        # transparent PNG next to the source
-python app.py --upscale "C:\path\small.png" 2K       # 1080p / 2K / 4K
-python app.py --image-prompt "C:\path\photo.png"     # describe as a text-to-image prompt (Concise/Detailed)
-python app.py --ascii "C:\path\photo.png" 120        # image -> ASCII art (width in columns)
-python app.py --detect "C:\path\essay.docx"          # AI-likelihood estimate
-python app.py --extract-text "C:\path\shot.png" Max  # OCR (Fast/Max): prints the text
-python app.py --identify-font "C:\path\text.png"     # top-5 Google Font matches
-python app.py --split-stems "C:\path\song.mp3"       # 4 stem WAVs next to the song
-python app.py --qr "https://example.com" out.png     # QR code PNG (or .svg)
-python app.py --convert-units "100 km to mi"         # unit conversion
-python app.py --convert-currency 100 USD EUR         # currency (offline rates)
-python app.py --convert-tz "2026-06-13 14:30" Asia/Dubai America/New_York
-```
-
-## Standalone .exe (no Python needed)
-
-A pre-built one-folder app lives in `dist\Bu D3eij\`. Run
-`dist\Bu D3eij\Bu D3eij.exe` (make a desktop shortcut to it if you like).
-Keep the whole `Bu D3eij` folder together — zip it if you want to move it.
-ffmpeg still needs to be installed for audio/video conversions and YouTube downloads.
-
-To rebuild it yourself (with the venv active):
+### Headless command-line
 
 ```powershell
-pip install pyinstaller
-pyinstaller --noconfirm --windowed --name "Bu D3eij" `
-  --icon "AppLogo.ico" `
-  --add-data "AppLogo.ico;." --add-data "DashboardLogo.png;." `
-  --add-data "bud3eij_theme.json;." --add-data "assets;assets" `
-  --add-data "assets/data/rates_seed.json;assets/data" `
-  --collect-all customtkinter --collect-all tkinterdnd2 `
-  --collect-all pptx --collect-all mammoth --collect-all markdownify --collect-all bs4 `
-  --collect-data pdfminer --collect-data pdfplumber `
-  --collect-data docx --collect-data pdf2docx --collect-data reportlab `
-  --collect-submodules pymupdf4llm --hidden-import tabulate `
-  --collect-all yt_dlp `
-  --collect-all rembg --collect-all onnxruntime --copy-metadata pymatting --copy-metadata rembg `
-  --collect-all tokenizers --collect-all rapidocr `
-  --collect-all demucs --collect-all torch --collect-all torchaudio `
-  --collect-all sounddevice --copy-metadata torch `
-  --collect-all spandrel --collect-all transformers --collect-all timm `
-  --collect-all kornia --collect-all torchvision `
-  --collect-all pint --collect-all tzdata --collect-all qrcode `
-  --exclude-module pymupdf.layout --exclude-module rapidocr_onnxruntime `
-  --hidden-import win32timezone app.py
+python app.py --convert "photo.png" jpg
+python app.py --remove-bg "photo.png"          # transparent PNG
+python app.py --upscale "small.png" 2K         # 1080p / 2K / 4K
+python app.py --detect "essay.docx"            # AI-likelihood estimate
+python app.py --extract-text "shot.png"        # OCR
+python app.py --split-stems "song.mp3"         # 4 stem WAVs
+python app.py --qr "https://example.com" out.png
+# (also: --download, --image-prompt, --ascii, --identify-font, --convert-units/currency/tz)
 ```
 
-> Note: bundling PyTorch (CUDA) makes the one-folder build ~6 GB.
+## License & credits
 
-The icon is generated from `AppLogo.png` once with:
-`python -c "from PIL import Image; Image.open('AppLogo.png').save('AppLogo.ico', sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])"`
+Bu D3eij is licensed under the [MIT License](LICENSE).
 
-## Usage
-
-1. Open the **Converter** view (selected by default).
-2. Drag a file onto the upload zone, or click it to browse.
-3. *Convert from* fills in automatically; choose a format in *Convert to*.
-4. Click **Convert Now**. The converted file is saved beside the source
-   (e.g. `photo.png` → `photo.jpg`). Existing files are never overwritten —
-   a numbered copy like `photo (1).jpg` is created instead.
-
-Use **Choose Export Path** to send output to a specific folder instead of next
-to the source, and **Clear** to reset the form for the next file.
-
-For **Batch Convert**, drop several files, pick a single target format
-(only formats valid for *every* selected file are offered), and click
-**Convert All**.
-
-The **Recent** tab lists past conversions (stored in
-`%LOCALAPPDATA%\Bu D3eij\history.json`): use **Open** to launch a result,
-**Folder** to reveal it in Explorer, or **Clear history** to empty the list.
-
-## Notes & limitations
-
-- **Audio/video** conversions need ffmpeg installed and on your PATH; if it
-  is missing the app shows a clear message instead of failing silently.
-- **DOCX → PDF** gives the best results when Microsoft Word is installed
-  (via COM); otherwise it produces a text-only PDF with `reportlab`.
-- **PPTX → PDF** gives the best results when Microsoft PowerPoint is installed
-  (via COM); otherwise it produces a text-only PDF with `reportlab`.
-- **PDF → DOCX** uses `pdf2docx` for layout-aware conversion. Very complex
-  PDFs may still differ from the original.
-- **Markdown output** (`PDF/DOCX/PPTX → MD`) is structure-aware
-  (headings, bold, lists, tables) but is plain Markdown — images are not
-  embedded, and very complex layouts may simplify.
-- Image conversions to formats without transparency (JPG, BMP) flatten any
-  alpha channel to RGB. Animated GIFs keep their animation when converting to
-  WEBP/TIFF/PNG; converting to a still format uses the first frame.
-- **AI detection is an estimate, not proof** — detectors can mislabel edited,
-  translated, or non-native-English human writing. Never treat the score as an
-  accusation.
-- **Font identification is a closest-match estimate** against ~3,500 Google
-  Fonts — commercial fonts are shown as their nearest Google lookalike. A tight
-  crop of large, clear text gives the best results. The ~64 MB font model
-  downloads once on first use. **Text Extraction** (OCR) works fully offline
-  out of the box; its **Fast** tier also reads Chinese, while **Max** is tuned
-  for English (proper word spacing, catches faint/small lines) and fetches a
-  small model once on first use. Nothing uses an online API — no accounts,
-  no charges, no usage limits.
-- **Stem splitting** is GPU-accelerated on NVIDIA cards (seconds per song);
-  on CPU it works but takes ~15–25 minutes per song. The Demucs model
-  (~320 MB) downloads once on first use. Stem playback mixes in real time —
-  mute/solo/volume changes are heard instantly.
-- **Image → Prompt** describes any image as a detailed text-to-image prompt
-  using **Qwen2-VL-2B** running on your GPU — fully offline, no account. The
-  model (~4.4 GB) downloads once on first use; pick **Concise** for a one-liner
-  or **Detailed** for a full prompt (subject, style, lighting, colour,
-  composition), then copy it to the clipboard. **ASCII Art** is instant and
-  offline (no model): choose the output width, optionally invert or colour it,
-  and export `.txt` or a rendered `.png`.
-- **Nexus** is fully offline and key-less. The **currency** converter ships with
-  a bundled ECB rate snapshot so it works on a brand-new machine; **Refresh**
-  fetches today's rates from the open Frankfurter endpoint (a failed refresh
-  just keeps the cached set). **Units** uses `pint` (temperatures handled with
-  correct offsets); **time zones** use the bundled IANA database. The **QR**
-  generator builds the right payload per content type (e.g. a `WIFI:` string for
-  Wi-Fi), previews live, and exports PNG or SVG — nothing is uploaded anywhere.
-
-## Tech stack
-
-Python 3.11 · customtkinter · tkinterdnd2 · Pillow · python-docx ·
-pdfplumber · reportlab · pdf2docx · python-pptx ·
-pymupdf4llm · mammoth · markdownify · yt-dlp · ffmpeg-python ·
-rembg · onnxruntime (Real-ESRGAN, DeBERTa detector, font classifier) ·
-rapidocr · tokenizers · demucs + PyTorch CUDA (stem splitter) · sounddevice ·
-spandrel (UltraSharp V2 upscaler) · transformers/timm/kornia (BiRefNet-HR) ·
-pint · tzdata · qrcode (Nexus utilities)
+It builds on third-party libraries and downloads third-party AI models — see
+[THIRD_PARTY.md](THIRD_PARTY.md) for the full list and notices. Two carry extra
+terms: **PyMuPDF** (AGPL-3.0, used by the PDF converters) and the **UltraSharp V2**
+upscaler models (CC-BY-NC-SA 4.0, non-commercial). Built with
+[CustomTkinter](https://github.com/TomSchimansky/CustomTkinter),
+[tkinterdnd2](https://github.com/pmgagne/tkinterdnd2), PyTorch, ONNX Runtime, and
+many more — thank you to all their authors.

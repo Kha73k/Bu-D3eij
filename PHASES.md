@@ -89,10 +89,13 @@ theme** (dark + red + Inter), **landing + changelog**, hosted free on **GitHub P
 - [ ] Replace placeholder tool mocks with real screenshots/GIFs
 - [ ] Compile Tailwind (drop the CDN) + GitHub Pages deploy; wire Download CTA → Release
 
-### Phase 4 — Polish & launch ⬜ TODO
-- [ ] End-to-end test on a clean Windows box (no Python / CUDA / model cache)
-- [ ] Public README rewrite, `CONTRIBUTING`, issue templates
-- [ ] Flip repo public → publish release → publish site → announce
+### Phase 4 — Polish & launch ⏳ IN PROGRESS
+- [x] Clean-VM cold-start test (done in Phase 2 — Windows Sandbox)
+- [x] Public **README** rewrite (`README.md`) — installer-first, value-prop led
+- [ ] `CONTRIBUTING` + issue templates (optional)
+- [ ] Deploy the site (Cloudflare Pages — free, sidesteps the Actions billing lock)
+- [ ] Publish a release (manual: build locally + attach the exe)
+- [ ] Flip repo public → announce
 
 ## Decision log
 - **2026-06-15** — Locked the five decisions above; chose Hugging Face to host the
