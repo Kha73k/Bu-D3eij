@@ -8,7 +8,9 @@
   -> Windows Sandbox -> restart  (Win10/11 Pro; needs virtualization in BIOS).
 
   Usage:  powershell -ExecutionPolicy Bypass -File installer\test-sandbox.ps1
+          add  -MemoryMB 8192  to cap the sandbox RAM (default 8 GB = test min-spec).
 #>
+param([int]$MemoryMB = 8192)
 $ErrorActionPreference = "Stop"
 $dist = Join-Path $PSScriptRoot "dist"
 $exe  = Join-Path $dist "BuD3eij-Setup.exe"
@@ -23,6 +25,7 @@ if (-not (Get-Command "WindowsSandbox.exe" -ErrorAction SilentlyContinue)) {
 $wsb = Join-Path $env:TEMP "bud3eij-test.wsb"
 @"
 <Configuration>
+  <MemoryInMB>$MemoryMB</MemoryInMB>
   <MappedFolders>
     <MappedFolder>
       <HostFolder>$dist</HostFolder>
@@ -36,6 +39,6 @@ $wsb = Join-Path $env:TEMP "bud3eij-test.wsb"
 </Configuration>
 "@ | Set-Content -Path $wsb -Encoding ASCII
 
-Write-Host "Launching Windows Sandbox; the installer is at C:\Setup inside it."
+Write-Host "Launching Windows Sandbox ($MemoryMB MB RAM); the installer is at C:\Setup inside it."
 Write-Host "Run BuD3eij-Setup.exe there, install (pick Core or Vanguard for a fast test), and launch."
 Start-Process $wsb
