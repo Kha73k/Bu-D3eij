@@ -198,10 +198,12 @@ def _setup_frozen_logging() -> None:
     print()/traceback silently vanishes AND any library that writes to them (e.g.
     Demucs/tqdm progress during stem splitting) crashes with
     "'NoneType' object has no attribute 'write'". Redirect the None streams to a log
-    file. Never raises; a failure here just keeps the silent behaviour.
+    file — or a null sink if the log can't be opened — so they are never None.
+    Never raises.
     """
     if sys.stdout is not None and sys.stderr is not None:
         return  # a real console (e.g. `python app.py`) — nothing to fix
+    stream = None
     try:
         APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
         log_path = APP_DATA_DIR / "app.log"
@@ -209,12 +211,17 @@ def _setup_frozen_logging() -> None:
             log_path.unlink()  # crude size cap; this is a diagnostics tail
         stream = open(log_path, "a", encoding="utf-8", buffering=1)  # noqa: SIM115
         stream.write(f"\n--- {APP_NAME} session {datetime.now():%Y-%m-%d %H:%M:%S} ---\n")
-        if sys.stdout is None:
-            sys.stdout = stream
-        if sys.stderr is None:
-            sys.stderr = stream
-    except Exception:  # noqa: BLE001 - logging must never block startup
-        pass
+    except Exception:  # noqa: BLE001 - fall back to a null sink below
+        stream = None
+    if stream is None:  # log unavailable -> /dev/null sink so the streams are NEVER None
+        try:
+            stream = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+        except Exception:  # noqa: BLE001
+            return
+    if sys.stdout is None:
+        sys.stdout = stream
+    if sys.stderr is None:
+        sys.stderr = stream
 
 
 # --------------------------------------------------------------------------- #

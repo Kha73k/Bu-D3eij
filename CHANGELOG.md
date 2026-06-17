@@ -8,12 +8,14 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 ## v4.3.3 — 2026-06-17
 
 ### Fixed
-- **Sonara stem splitting no longer crashes with "'NoneType' object has no
-  attribute 'write'".** When launched without a console (the installer's
-  `pythonw.exe` shortcut), `sys.stdout`/`sys.stderr` are `None`; Demucs/tqdm progress
-  output wrote to them and crashed. The app now redirects those streams to a log
-  file at startup whenever they're missing — fixing Sonara and any other tool that
-  writes to stdout/stderr in a windowed launch.
+- **Background removal and Sonara stem splitting no longer crash or hang on
+  installed builds.** Launched without a console (the installer's `pythonw.exe`
+  shortcut), `sys.stdout`/`sys.stderr` are `None`, so libraries that write progress
+  there (rembg / onnxruntime, Demucs / tqdm) crashed with *"'NoneType' object has no
+  attribute 'write'"* — and in the Background Remover that crash also hit the error
+  handler, so the job never finished and the app showed "not responding". Streams are
+  now redirected to a log file (or a null sink) at startup whenever they're missing,
+  so every tool's output is safe.
 - **The AI Text Detector model download is resilient.** The 1.7 GB model download
   now **resumes** (HTTP Range) and retries on a slow or dropped connection instead
   of failing outright, and an interrupted download continues on the next run rather

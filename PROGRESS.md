@@ -42,8 +42,20 @@ stdout/stderr is `None` (covers pythonw + frozen) — protects Sonara and any to
 writes to those streams. Bumped to **v4.3.3** and rebuilt the installer (Inno Setup,
 ~30 MB). Verified: app compiles, `import app`, and under simulated `None` streams the
 redirect engages so `print()`/Demucs writes no longer crash. Slipped past pre-launch
-because the Sandbox tests exercised Core + Vanguard, not Sonara. **User to publish a
-v4.3.3 release** with the rebuilt exe.
+because the Sandbox tests exercised Core + Vanguard, not Sonara.
+- **Same root, 2nd symptom — Background Remover "not responding":** every bg tier
+  failed because rembg/onnxruntime progress wrote to the `None` streams; worse, the bg
+  worker's `except` runs `traceback.print_exc()` *before* signalling done, and that
+  print ALSO crashed on `None` stderr, so the job never cleaned up → permanent
+  busy/hang (Sonara showed a clean error because its handler doesn't pre-print). The
+  stream fix covers it; also hardened `_setup_frozen_logging` with an `os.devnull`
+  fallback so streams are NEVER `None` even if the log can't be opened. Verified
+  `remove_background` completes under simulated `None` streams.
+- **Also folded into v4.3.3 — AI Text Detector download resilience:** the 1.7 GB
+  model download now retries + resumes (HTTP Range, 60 s timeout) instead of failing
+  on a slow/dropped connection (a friend hit "read operation timed out"); a failed
+  attempt keeps the `.part` so re-running resumes from where it stopped.
+- **Installer rebuilt** with all three fixes; user to publish a single v4.3.3 release.
 
 ### 2026-06-16 — 🚀 Public launch
 Bu D3eij is live. Repo flipped to **public** (https://github.com/Kha73k/Bu-D3eij),
