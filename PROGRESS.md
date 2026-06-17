@@ -31,6 +31,20 @@ The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 
 ## Completed
 
+### 2026-06-17 — Post-launch fix: Sonara crash under pythonw (v4.3.3)
+A friend's install hit `Stem splitting failed: 'NoneType' object has no attribute
+'write'`. Cause: the installer launches the app via **pythonw.exe** (no console), so
+`sys.stdout`/`sys.stderr` are `None`; Demucs/tqdm progress output writes to them and
+crashes. `_setup_frozen_logging()` already redirected None streams to `app.log` — but
+it was gated behind `sys.frozen`, so it ran only in the (old) PyInstaller exe, never
+the pythonw-launched install. **Fix:** drop the `frozen` gate so it runs whenever
+stdout/stderr is `None` (covers pythonw + frozen) — protects Sonara and any tool that
+writes to those streams. Bumped to **v4.3.3** and rebuilt the installer (Inno Setup,
+~30 MB). Verified: app compiles, `import app`, and under simulated `None` streams the
+redirect engages so `print()`/Demucs writes no longer crash. Slipped past pre-launch
+because the Sandbox tests exercised Core + Vanguard, not Sonara. **User to publish a
+v4.3.3 release** with the rebuilt exe.
+
 ### 2026-06-16 — 🚀 Public launch
 Bu D3eij is live. Repo flipped to **public** (https://github.com/Kha73k/Bu-D3eij),
 release **v4.3.2** published with `BuD3eij-Setup.exe` (~30 MB — built locally via

@@ -5,6 +5,18 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v4.3.3 — 2026-06-17
+
+### Fixed
+- **Sonara stem splitting no longer crashes with "'NoneType' object has no
+  attribute 'write'".** When launched without a console (the installer's
+  `pythonw.exe` shortcut), `sys.stdout`/`sys.stderr` are `None`; Demucs/tqdm progress
+  output wrote to them and crashed. The app now redirects those streams to a log
+  file at startup whenever they're missing — fixing Sonara and any other tool that
+  writes to stdout/stderr in a windowed launch.
+
+---
+
 ## v4.3.2 — 2026-06-14
 
 ### Fixed

@@ -193,14 +193,15 @@ def save_history(history: list[dict]) -> None:
 def _setup_frozen_logging() -> None:
     """Give the windowed exe somewhere to print: tee stdout/stderr to a log file.
 
-    In a PyInstaller --windowed build there is no console, so every print()
-    and traceback silently vanishes — field failures become undebuggable.
-    Never raises; a failure here just keeps the silent behaviour.
+    When the app runs without a console — the installer's pythonw.exe shortcut, OR
+    a PyInstaller --windowed build — sys.stdout/sys.stderr are None. Then every
+    print()/traceback silently vanishes AND any library that writes to them (e.g.
+    Demucs/tqdm progress during stem splitting) crashes with
+    "'NoneType' object has no attribute 'write'". Redirect the None streams to a log
+    file. Never raises; a failure here just keeps the silent behaviour.
     """
-    if not getattr(sys, "frozen", False):
-        return
     if sys.stdout is not None and sys.stderr is not None:
-        return
+        return  # a real console (e.g. `python app.py`) — nothing to fix
     try:
         APP_DATA_DIR.mkdir(parents=True, exist_ok=True)
         log_path = APP_DATA_DIR / "app.log"
@@ -245,7 +246,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "4.3.2"
+APP_VERSION = "4.3.3"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {

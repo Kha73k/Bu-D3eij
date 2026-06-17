@@ -689,8 +689,12 @@ still apply; only the file a function lives in changed.
     filedialogs and remember the last folder per key (`self._last_dirs`).
   - **`_set_image_file(...)`** is the shared image-validation/preview for the
     Marquee panels; `_not_a_file_message(path)` words folder-vs-file drops.
-  - **`_setup_frozen_logging()`** (called in `main()`) tees stdout/stderr of the
-    windowed exe to `%LOCALAPPDATA%\Bu D3eij\app.log` so prints aren't lost.
+  - **`_setup_frozen_logging()`** (called in `main()`) tees stdout/stderr to
+    `%LOCALAPPDATA%\Bu D3eij\app.log` **whenever they're `None`** — any no-console
+    launch: the installer's `pythonw.exe` shortcut OR a PyInstaller `--windowed` exe.
+    (NOT gated on `sys.frozen` — that gate let Sonara/Demucs crash with *"'NoneType'
+    object has no attribute 'write'"* under the pythonw install; **v4.3.3** dropped
+    it.) Without it, prints/tracebacks vanish and any stdout/stderr-writing lib crashes.
   - The Recent table only refreshes when it's the visible frame
     (`self._current_frame`, set by `show_frame`); Tools stats refresh on show
     (`_refresh_tools`); a bare file argument to the exe preloads the Converter.
