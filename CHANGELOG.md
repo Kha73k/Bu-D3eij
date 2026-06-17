@@ -14,6 +14,10 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
   output wrote to them and crashed. The app now redirects those streams to a log
   file at startup whenever they're missing — fixing Sonara and any other tool that
   writes to stdout/stderr in a windowed launch.
+- **The AI Text Detector model download is resilient.** The 1.7 GB model download
+  now **resumes** (HTTP Range) and retries on a slow or dropped connection instead
+  of failing outright, and an interrupted download continues on the next run rather
+  than restarting from zero.
 
 ---
 

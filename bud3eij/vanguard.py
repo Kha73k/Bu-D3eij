@@ -19,9 +19,7 @@ from __future__ import annotations
 
 import math
 import re
-import shutil
 import sys
-import urllib.request
 from pathlib import Path
 
 from .converters import _read_text
@@ -56,7 +54,8 @@ VANGUARD_FILE_META: dict[str, tuple[str, str, int]] = {
     ),
 }
 DETECTOR_NAME = "desklib DeBERTa-v3-large"
-_DOWNLOAD_TIMEOUT = 30  # socket timeout (s) per read: a stalled download fails, not hangs
+_DOWNLOAD_TIMEOUT = 60   # socket timeout (s) per read
+_DOWNLOAD_RETRIES = 6    # resume attempts (HTTP Range) on a slow/stalled connection
 
 _MAX_TOKENS = 768       # the detector's training context length
 _MIN_WORDS = 40         # below this, results are unreliable -> caveat
@@ -136,6 +135,40 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _download_resumable(url: str, tmp: Path, total: int) -> None:
+    """Download `url` to `tmp`, resuming with an HTTP Range request after a stall.
+
+    The detector is ~1.7 GB, so a single slow/dropped read shouldn't throw away the
+    whole transfer. Retries up to `_DOWNLOAD_RETRIES` times, each resuming from the
+    bytes already in `tmp`; raises if it still can't finish (the `.part` is left in
+    place so a later call continues from where it stopped).
+    """
+    import time
+    import urllib.request
+
+    last = None
+    for attempt in range(1, _DOWNLOAD_RETRIES + 1):
+        have = tmp.stat().st_size if tmp.exists() else 0
+        if have >= total:
+            return
+        req = urllib.request.Request(url)
+        if have:
+            req.add_header("Range", f"bytes={have}-")
+        try:
+            with urllib.request.urlopen(req, timeout=_DOWNLOAD_TIMEOUT) as resp:  # noqa: S310
+                append = have > 0 and getattr(resp, "status", 200) == 206
+                with open(tmp, "ab" if append else "wb") as fh:
+                    for block in iter(lambda: resp.read(1 << 20), b""):
+                        fh.write(block)
+            if tmp.stat().st_size >= total:
+                return
+            last = "connection closed before the file finished"
+        except Exception as exc:  # noqa: BLE001 - any network error -> resume + retry
+            last = exc
+        time.sleep(min(2 * attempt, 10))
+    raise ConversionError(f"download stalled after {_DOWNLOAD_RETRIES} attempts ({last})")
+
+
 def _ensure_file(kind: str) -> Path:
     """Locate a detector file: frozen-exe bundle, dev export dir, cache, else download.
 
@@ -156,17 +189,13 @@ def _ensure_file(kind: str) -> Path:
     _MODEL_DIR.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     try:
-        with urllib.request.urlopen(_BASE_URL + filename,
-                                    timeout=_DOWNLOAD_TIMEOUT) as resp, \
-                open(tmp, "wb") as fh:  # noqa: S310 - pinned HTTPS URL
-            shutil.copyfileobj(resp, fh)
-    except Exception as exc:  # noqa: BLE001
-        tmp.unlink(missing_ok=True)
+        _download_resumable(_BASE_URL + filename, tmp, exact_size)
+    except Exception as exc:  # noqa: BLE001 - keep the .part so a re-run resumes
         raise ConversionError(
             f"Could not download the AI Text Detector model '{filename}': {exc}. "
-            f"You can also place it manually in {_MODEL_DIR}.") from exc
+            f"Re-run to resume the download, or place it manually in {_MODEL_DIR}.") from exc
     if tmp.stat().st_size != exact_size or _sha256(tmp) != sha256:
-        tmp.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)  # corrupt -> start fresh next time
         raise ConversionError(
             "Downloaded detector file failed its integrity check (size/hash mismatch).")
     tmp.replace(dest)
