@@ -26,13 +26,16 @@ _verify_*.py
 # --- Personal new-PC migration doc (kept locally, not published) ---
 MIGRATION_PROMPT.txt
 
-# --- Cloudflare Workers (site deploy) ---
-.wrangler/
-node_modules/
-
 # --- v3.0 Vanguard model export (dev-only) ---
 # Throwaway export venv (torch etc.) and the large model working dir. The shipped
 # model lives in the user cache (~/.bud3eij/models/vanguard/); regenerate it with
 # tools/export_vanguard_model.py if needed.
 .venv_export/
 vanguard_model/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
