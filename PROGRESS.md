@@ -2,9 +2,9 @@
 
 Running log of what's done and what's next. Update at the end of each session.
 
-_Last updated: 2026-06-14 (Marquee Image → Prompt + ASCII Art; DPI drag fix; debounced resize)_
+_Last updated: 2026-06-20 (TikTok downloader section — SnapTik-style, no watermark)_
 
-## Status: working app — v4.3.2 (Marquee Image → Prompt + ASCII Art; smooth-drag DPI fix; debounced resize; exe rebuilt)
+## Status: working app — v4.4.0 (TikTok downloader: video/photo/MP3, no-watermark via tikwm resolver + yt-dlp fallback)
 
 Core app, all required conversions, Recent history, Batch Convert, YouTube
 downloads, a **Marquee** image-editing section (Background Remover **+ Image
@@ -24,7 +24,9 @@ font identification); **v4.0 = Sonara audio section — Demucs stem splitter +
 real-time 4-stem mixer (first PyTorch/CUDA dependency)**; v4.1 = Marquee GPU
 upgrade (UltraSharp V2 + BiRefNet-HR); **v4.2 = Nexus utilities section
 (offline currency/units/time-zone converter + QR-code generator)**; **v4.3 =
-Marquee gains Image → Prompt (Qwen2-VL-2B image captioner) + ASCII Art**.
+Marquee gains Image → Prompt (Qwen2-VL-2B image captioner) + ASCII Art**;
+**v4.4 = TikTok downloader section (SnapTik-style no-watermark video/photo/MP3
+via a tikwm resolver, yt-dlp fallback)**.
 
 The project is now a **private GitHub repo**: https://github.com/Kha73k/Bu-D3eij
 (branch `main`; v1.4 developed on `redesign-1.4`). Commit/push as work lands.

@@ -299,6 +299,23 @@ still apply; only the file a function lives in changed.
   (`preferedformat` — yt-dlp's spelling) so a single-file webm-only download still
   lands as `.mp4`; `_yt_hook` is **throttled to ≥100 ms** between UI posts
   (yt-dlp fires per network block — unthrottled it floods the Tk event queue).
+- **TikTok download (v4.4):** `download_tiktok(url, mode, out_dir, progress_hook)`
+  in `bud3eij/tiktok.py` (lazy import) — SnapTik-style, **no watermark**. `mode` is
+  `"media"` or `"mp3"`; the post type (video vs photo) is **auto-detected**. Primary
+  engine is a TikTok **resolver API** (tikwm) returning the direct no-watermark
+  video URL (`hdplay`/`play`, never `wmplay`), the photo `images` array, and the
+  `music` track — fetched straight via stdlib `urllib` (emitting yt-dlp-shaped
+  progress dicts so the GUI hook is unchanged); only the public TikTok URL is sent.
+  **yt-dlp is an automatic fallback** (`_ytdlp_fallback`) for when the resolver is
+  down — but TikTok's yt-dlp web extractor is frequently broken upstream ("can't
+  extract universal data for rehydration"), which is exactly why the resolver is
+  primary. Returns the saved **file** (video/mp3) or, for a photo post, the
+  **folder** its images landed in. Sits outside `convert_file`/`CONVERSIONS`. GUI
+  **TikTok** page (`_build_tiktok` + `on_tiktok_download`/`_tiktok_worker`/`_tt_hook`,
+  a **Media / MP3** segmented toggle) mirrors the YouTube page; results go through
+  `add_history`. **No new pip dep or build collector** (urllib/json are stdlib;
+  yt-dlp + ffmpeg already bundled). Nav icon reuses `music`. CLI:
+  `--tiktok URL [media|mp3]`.
 - **Marquee = a multi-tool image-editing page (tool switcher added v2.3, now 4
   tools).** `_build_marquee` is a shared `_section_header` + a
   `CTkSegmentedButton` (`self.mq_tool`: "Background Remover" / "Upscaler" /
@@ -888,7 +905,9 @@ still apply; only the file a function lives in changed.
   toggle detaches the whole hidden Recent page along with every other, so its
   rows no longer redraw on a toggle regardless.)
 - **CLI:** `_run_cli()` / `main()` — `--convert FILE FORMAT`,
-  `--download URL FORMAT` (mp3/mp4, saves to cwd), `--remove-bg FILE [TIER]`
+  `--download URL FORMAT` (mp3/mp4, saves to cwd),
+  `--tiktok URL [media|mp3]` (v4.4 — no-watermark TikTok into cwd; a photo post
+  saves images to a subfolder), `--remove-bg FILE [TIER]`
   (transparent PNG next to the source; TIER = Flash/Mid/Omega, default Mid),
   `--upscale FILE [TARGET]` (1080p/2K/4K, default 2K), `--detect FILE`,
   `--extract-text FILE [TIER]` (Fast/Max, prints the OCR'd text),
@@ -988,6 +1007,8 @@ bud3eij\          pure, GUI-free logic (importable/testable without the GUI):
   formats.py      format model, helpers, ConversionError
   converters.py   convert_file + all document/image/AV converters
   youtube.py      download_youtube (yt-dlp)
+  tiktok.py       download_tiktok - SnapTik-style no-watermark downloader
+                  (tikwm resolver primary + yt-dlp fallback) (TikTok page, v4.4)
   ffmpeg.py       ensure_ffmpeg - on-demand static ffmpeg download (launch prep)
   background.py   remove_background + BG_MODELS (Marquee bg remover)
   upscale.py      upscale_image + TARGETS (Marquee Real-ESRGAN upscaler)

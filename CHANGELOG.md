@@ -5,6 +5,20 @@ This project follows a simple `MAJOR.MINOR.PATCH` versioning scheme.
 
 ---
 
+## v4.4.0 — 2026-06-20
+
+### Added
+- **TikTok downloader (new sidebar section).** Paste a TikTok link and save it
+  with **no watermark** — a normal **video** as an MP4, a **photo post** as its
+  full set of images (into a per-post folder), or just the **sound** as an MP3.
+  The post type (video vs photo) is auto-detected, so you only pick **Media** or
+  **MP3**. It works like SnapTik: a TikTok resolver fetches the direct
+  no-watermark links (only the public TikTok URL is sent — never any of your
+  files), with yt-dlp kept as an automatic fallback. Also available headless:
+  `--tiktok URL [media|mp3]`.
+
+---
+
 ## v4.3.3 — 2026-06-17
 
 ### Fixed

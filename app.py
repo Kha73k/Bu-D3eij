@@ -62,6 +62,7 @@ from bud3eij.formats import (  # noqa: F401
 )
 from bud3eij.converters import convert_file  # noqa: F401
 from bud3eij.youtube import YT_FORMATS, download_youtube  # noqa: F401
+from bud3eij.tiktok import TIKTOK_MODES, download_tiktok  # noqa: F401
 from bud3eij.background import (  # noqa: F401
     BG_MODELS,
     DEFAULT_BG_TIER,
@@ -228,8 +229,8 @@ def _setup_frozen_logging() -> None:
 # GUI
 # --------------------------------------------------------------------------- #
 APP_NAME = "Bu D3eij"
-NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "YouTube", "Marquee",
-             "Vanguard", "Sonara", "Nexus", "Tools"]
+NAV_ITEMS = ["Home", "Converter", "Recent", "Batch Convert", "YouTube", "TikTok",
+             "Marquee", "Vanguard", "Sonara", "Nexus", "Tools"]
 
 # Logo-derived palette (extracted from AppLogo.png).
 RED = "#E11414"
@@ -253,7 +254,7 @@ SURFACE_SOFT = ("#FBECEC", "#221A1B")  # subtle red-tinted hero / accent surface
 TEXT = ("#1A1416", "#F2E9EA")          # primary text
 SUN_GLYPH = "☀"   # ☀ shown while in Dark mode (click → Light)
 MOON_GLYPH = "☾"  # ☾ shown while in Light mode (click → Dark)
-APP_VERSION = "4.3.3"
+APP_VERSION = "4.4.0"
 
 # Extension -> file-type icon (assets/filetypes/<key>.png). Falls back to "default".
 EXT_ICON = {
@@ -272,7 +273,7 @@ def icon_key_for_ext(ext: str) -> str:
 # Nav label -> UI icon (assets/ui/<name>.png).
 NAV_ICONS = {
     "Home": "house", "Converter": "repeat", "Recent": "clock",
-    "Batch Convert": "layers", "YouTube": "youtube", "Marquee": "sparkles",
+    "Batch Convert": "layers", "YouTube": "youtube", "TikTok": "music", "Marquee": "sparkles",
     "Vanguard": "shield-check", "Sonara": "audio-lines", "Nexus": "compass",
     "Tools": "wrench",
 }
@@ -1406,6 +1407,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             "Converter": self._build_converter,
             "Batch Convert": self._build_batch,
             "YouTube": self._build_youtube,
+            "TikTok": self._build_tiktok,
             "Marquee": self._build_marquee,
             "Vanguard": self._build_vanguard,
             "Sonara": self._build_sonara,
@@ -2642,6 +2644,132 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.yt_progress.grid_remove()
         self.yt_progress.set(0)
         self.yt_status.configure(text="Paste a video link to begin.", text_color=MUTED)
+
+    # ---- TikTok (yt-dlp) view --------------------------------------------- #
+    def _build_tiktok(self, parent) -> ctk.CTkFrame:
+        frame = ctk.CTkFrame(parent)
+        frame.grid_columnconfigure(0, weight=1)
+        self._section_header(frame, "TikTok", "Paste a link — video or photos download with no watermark.")
+
+        card = ctk.CTkFrame(frame, fg_color=CARD_SOFT, corner_radius=12)
+        card.grid(row=1, column=0, sticky="ew", padx=24, pady=(4, 12))
+        card.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            card, text="TIKTOK URL", font=self._font(11, "medium"), text_color=MUTED,
+        ).grid(row=0, column=0, sticky="w", padx=18, pady=(16, 2))
+        self.tt_url = ctk.CTkEntry(
+            card, placeholder_text="https://www.tiktok.com/@user/video/…", height=40,
+        )
+        self.tt_url.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 10))
+        self.tt_url.bind("<Return>", lambda _e: self.on_tiktok_download())
+
+        opts = ctk.CTkFrame(card, fg_color="transparent")
+        opts.grid(row=2, column=0, sticky="w", padx=18, pady=(0, 6))
+        ctk.CTkLabel(opts, text="Get:").grid(row=0, column=0, padx=(0, 10))
+        self.tt_mode = ctk.CTkSegmentedButton(
+            opts, values=["Media", "MP3"], selected_color=RED, selected_hover_color=RED_HOVER,
+        )
+        self.tt_mode.set("Media")
+        self.tt_mode.grid(row=0, column=1)
+        ctk.CTkLabel(
+            opts, text="Media = video or photos (auto) · MP3 = just the sound", text_color=MUTED,
+        ).grid(row=0, column=2, padx=(14, 0))
+
+        btnrow = ctk.CTkFrame(card, fg_color="transparent")
+        btnrow.grid(row=3, column=0, sticky="ew", padx=18, pady=(2, 10))
+        btnrow.grid_columnconfigure(0, weight=1)
+        self.tt_btn = GradientButton(
+            btnrow, text="Download", height=46, icon="download",
+            busy_text="Downloading", command=self.on_tiktok_download,
+        )
+        self.tt_btn.grid(row=0, column=0, sticky="ew")
+        self._clear_button(btnrow, self.reset_tiktok).grid(row=0, column=1, padx=(10, 0))
+
+        self.tt_progress = ctk.CTkProgressBar(frame, height=8)
+        self.tt_progress.set(0)
+        self.tt_progress.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 4))
+        self.tt_progress.grid_remove()
+
+        self.tt_status = ctk.CTkLabel(
+            frame, text="Paste a TikTok link to begin.", text_color=MUTED,
+            wraplength=620, justify="left", anchor="w",
+        )
+        self.tt_status.grid(row=3, column=0, sticky="w", padx=24, pady=(4, 16))
+        return frame
+
+    def on_tiktok_download(self):
+        url = self.tt_url.get().strip()
+        if not url:
+            self.tt_status.configure(text="Please paste a TikTok URL.", text_color=WARNING)
+            return
+        mode = "mp3" if self.tt_mode.get() == "MP3" else "media"
+        folder = self._ask_dir("tiktok", "Choose where to save the download")
+        if not folder:
+            self.tt_status.configure(text="Download cancelled (no folder chosen).", text_color=MUTED)
+            return
+        self._job_started()
+        self._tt_last_ui = 0.0
+        self.tt_btn.configure(state="disabled")
+        self.tt_btn.start_busy()
+        self.tt_progress.grid()
+        self.tt_progress.configure(mode="determinate")
+        self.tt_progress.set(0)
+        label = "MP3" if mode == "mp3" else "media"
+        self.tt_status.configure(text=f"Starting {label} download…", text_color=MUTED)
+        threading.Thread(
+            target=self._tiktok_worker, args=(url, mode, folder), daemon=True
+        ).start()
+
+    def _tiktok_worker(self, url: str, mode: str, folder: str):
+        try:
+            out = download_tiktok(url, mode, folder, progress_hook=self._tt_hook)
+            self.after(0, self._tiktok_done, url, out, None)
+        except Exception as exc:  # noqa: BLE001
+            traceback.print_exc()
+            self.after(0, self._tiktok_done, url, None, exc)
+
+    def _tt_hook(self, d: dict):
+        # Worker thread — marshal to UI, throttled (yt-dlp fires per network block).
+        status = d.get("status")
+        if status == "downloading":
+            now = time.monotonic()
+            if now - getattr(self, "_tt_last_ui", 0.0) < 0.1:
+                return
+            self._tt_last_ui = now
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            done = d.get("downloaded_bytes") or 0
+            if total:
+                self.after(0, self._tt_progress_set, done / total,
+                           f"Downloading… {int(done / total * 100)}%")
+            else:
+                self.after(0, self._tt_progress_set, None, "Downloading…")
+        elif status == "finished":
+            self.after(0, self._tt_progress_set, 1.0, "Processing…")
+
+    def _tt_progress_set(self, frac, text):
+        if frac is None:
+            if self.tt_progress.cget("mode") != "indeterminate":
+                self.tt_progress.configure(mode="indeterminate")
+                self.tt_progress.start()
+        else:
+            if self.tt_progress.cget("mode") != "determinate":
+                self.tt_progress.stop()
+                self.tt_progress.configure(mode="determinate")
+            self.tt_progress.set(frac)
+        if text:
+            self.tt_status.configure(text=text, text_color=MUTED)
+
+    def _tiktok_done(self, url: str, out, error: Exception | None):
+        self._job_done(status_label=self.tt_status, progress_bar=self.tt_progress,
+                       button=self.tt_btn, src=url, out=out, error=error)
+
+    def reset_tiktok(self):
+        self.tt_url.delete(0, "end")
+        self.tt_mode.set("Media")
+        self.tt_progress.grid_remove()
+        self.tt_progress.set(0)
+        self.tt_status.configure(text="Paste a TikTok link to begin.", text_color=MUTED)
 
     # ---- marquee (image editing) view ------------------------------------ #
     def _build_marquee(self, parent) -> ctk.CTkFrame:
@@ -5527,6 +5655,11 @@ def _run_cli(args) -> int:
         help="Download URL as FORMAT (mp3/mp4) into the current folder and exit.",
     )
     parser.add_argument(
+        "--tiktok", nargs="+", metavar="URL [MODE]",
+        help="Download a TikTok post into the current folder (MODE: media/mp3, "
+             "default media; a photo post saves its images to a subfolder) and exit.",
+    )
+    parser.add_argument(
         "--remove-bg", nargs="+", metavar="FILE [TIER]",
         help="Remove FILE's background (TIER: Flash/Mid/Omega, default Mid), "
              "save a transparent PNG next to it, and exit.",
@@ -5598,6 +5731,20 @@ def _run_cli(args) -> int:
         url, fmt = ns.download
         try:
             out = download_youtube(url, fmt, os.getcwd())
+            print(f"Saved: {out}")
+            return 0
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    if ns.tiktok:
+        if len(ns.tiktok) > 2:
+            parser.error("--tiktok takes URL and an optional MODE (media/mp3)")
+        url = ns.tiktok[0]
+        mode = ns.tiktok[1].lower() if len(ns.tiktok) > 1 else "media"
+        if mode not in TIKTOK_MODES:
+            parser.error(f"unknown mode '{mode}' — use one of: {', '.join(TIKTOK_MODES)}")
+        try:
+            out = download_tiktok(url, mode, os.getcwd())
             print(f"Saved: {out}")
             return 0
         except Exception as exc:  # noqa: BLE001
