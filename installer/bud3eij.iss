@@ -10,7 +10,7 @@
 ; selection -> create the shortcut. ML model weights download on first tool use.
 
 #define AppName "Bu D3eij"
-#define AppVersion "4.3.2"
+#define AppVersion "4.4.0"
 #define Publisher "Kha73k"
 #define AppURL "https://github.com/Kha73k/Bu-D3eij"
 
