@@ -36,6 +36,11 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 
+[Messages]
+; Tell the user up front that a setup window will appear after the wizard, so the
+; pip-install console reads as an expected, safe step rather than something scary.
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nAfter the wizard copies the app, a small "Bu D3eij - Setup" window will open and install the parts you choose. It downloads the components the app needs and sets them up on this PC - nothing of yours is uploaded. That step is normal and can take a few minutes; please let it finish.%n%nIt's recommended that you close all other applications before continuing.
+
 [Types]
 Name: "full"; Description: "All features"
 Name: "compact"; Description: "Core only"
@@ -131,13 +136,16 @@ begin
       Torch := 'cpu';
     Args := 'bootstrap.py --features "' + GetFeatures() + '" --torch ' + Torch +
             ' --reqs-dir "' + ExpandConstant('{app}\requirements') + '"';
-    // SW_SHOW so the user sees pip's download progress (this can take minutes / GBs).
+    // SW_SHOW: the user watches the branded "Bu D3eij - Setup" console (bootstrap.py)
+    // explain itself and show pip's progress (this can take minutes / GBs).
     if not Exec(ExpandConstant('{app}\python\python.exe'), Args, ExpandConstant('{app}'),
                 SW_SHOW, ewWaitUntilTerminated, ResultCode) then
-      MsgBox('Could not start the dependency installer.', mbError, MB_OK)
+      MsgBox('Bu D3eij could not start its component setup. Please run the ' +
+             'installer again.', mbError, MB_OK)
     else if ResultCode <> 0 then
-      MsgBox('Setting up components failed (exit ' + IntToStr(ResultCode) + ').' + #13#10 +
-             'Check your internet connection and retry from the install folder:' + #13#10 +
-             'python\python.exe ' + Args, mbError, MB_OK);
+      MsgBox('Bu D3eij could not finish setting up its components (code ' +
+             IntToStr(ResultCode) + ').' + #13#10#13#10 +
+             'This is almost always a temporary network problem - please check ' +
+             'your internet connection and run the installer again.', mbError, MB_OK);
   end;
 end;

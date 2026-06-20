@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Optional feature groups (Core is always installed). Canonical display order.
@@ -98,23 +99,90 @@ def _pip_install(python: str, reqs_dir, filename: str, dry_run: bool = False) ->
     # the installed console scripts, so pip's "not on PATH" notices are just noise.
     cmd = [python, "-m", "pip", "install", "--no-input",
            "--no-warn-script-location", "--disable-pip-version-check", "-r", str(req)]
-    print(">>", " ".join(cmd), flush=True)
-    return 0 if dry_run else subprocess.call(cmd)
+    if dry_run:
+        print(">>", " ".join(cmd), flush=True)
+        return 0
+    return subprocess.call(cmd)
+
+
+# Plan label -> a plain-English description shown in the setup window.
+_FRIENDLY = {
+    "Core": "the core app (file converter, utilities, downloaders)",
+    "Marquee": "the image tools (background remover, upscaler, image-to-prompt)",
+    "Vanguard": "the text tools (AI detector, text extraction, font ID)",
+    "Sonara": "the audio tools (stem splitter)",
+}
+
+_BANNER = (
+    "\n" + "=" * 66 + "\n"
+    "   Bu D3eij  -  Setup\n\n"
+    "   Almost there! This window is installing the parts you chose.\n"
+    "   It downloads the libraries the app needs and sets them up on\n"
+    "   THIS computer - nothing of yours is uploaded anywhere.\n\n"
+    "   Depending on what you picked and your internet speed this can\n"
+    "   take from under a minute to several minutes. Please leave this\n"
+    "   window open until it says \"All set\".\n"
+    + "=" * 66 + "\n"
+)
+
+
+def _set_console_title(title: str) -> None:
+    """Name the setup console so it's clearly Bu D3eij's, not a stray terminal."""
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetConsoleTitleW(title)
+    except Exception:  # noqa: BLE001 - cosmetic only
+        pass
+
+
+def _friendly_label(label: str) -> str:
+    if label.startswith("PyTorch"):
+        backend = "GPU" if "CUDA" in label else "CPU"
+        return f"the AI engine (PyTorch, {backend} build)"
+    return _FRIENDLY.get(label, label)
 
 
 def run(features, torch_variant: str, reqs_dir, python: str | None = None,
         dry_run: bool = False) -> int:
     python = python or sys.executable
     plan = plan_install(features, torch_variant)
-    print(f"Target Python: {python}")
-    print(f"Requirements:  {reqs_dir}")
+
+    if dry_run:  # terse output for the dev / CLI dry run
+        print(f"Target Python: {python}")
+        print(f"Requirements:  {reqs_dir}")
+        for i, (label, filename) in enumerate(plan, 1):
+            print(f"\n[{i}/{len(plan)}] {label}  ({filename})", flush=True)
+            _pip_install(python, reqs_dir, filename, dry_run=True)
+        print("\nPlan OK (dry run).", flush=True)
+        return 0
+
+    # Friendly, self-explaining setup console (this is what the user watches).
+    _set_console_title("Bu D3eij  -  Setup")
+    print(_BANNER, flush=True)
+    total = len(plan)
     for i, (label, filename) in enumerate(plan, 1):
-        print(f"\n[{i}/{len(plan)}] {label}  ({filename})", flush=True)
-        code = _pip_install(python, reqs_dir, filename, dry_run=dry_run)
+        friendly = _friendly_label(label)
+        print("\n" + "-" * 66, flush=True)
+        print(f"  Step {i} of {total}:  installing {friendly}", flush=True)
+        if label.startswith("PyTorch"):
+            print("  This is the big one. It can take several minutes to download\n"
+                  "  and install - that is completely normal. Please keep this\n"
+                  "  window open; it is working even when it looks quiet.", flush=True)
+        print("-" * 66, flush=True)
+        code = _pip_install(python, reqs_dir, filename)
         if code != 0:
-            print(f"FAILED on {label} (exit {code})", file=sys.stderr)
+            print("\n  Sorry - installing " + friendly + " did not finish.",
+                  file=sys.stderr)
+            print("  Please check your internet connection and run the installer\n"
+                  "  again. Nothing was harmed on your PC.", file=sys.stderr)
+            time.sleep(5)
             return code
-    print("\nEnvironment ready." if not dry_run else "\nPlan OK (dry run).", flush=True)
+
+    print("\n" + "=" * 66, flush=True)
+    print("   All set! Bu D3eij is ready to use.", flush=True)
+    print("   You can close this window - it will close on its own in a moment.", flush=True)
+    print("=" * 66, flush=True)
+    time.sleep(3)  # let the user read "All set" before the window closes
     return 0
 
 
