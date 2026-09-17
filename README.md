@@ -9,6 +9,8 @@ video — and adds local AI tools for background removal, upscaling, OCR, stem
 splitting and more. **Everything runs on your machine: no accounts, no limits,
 nothing uploaded.**
 
+https://github.com/user-attachments/assets/9752c108-2534-4aa3-a728-deca789714a5
+
 [![License: MIT](https://img.shields.io/badge/license-MIT-E11414)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-444)](#system-requirements)
 [![Download](https://img.shields.io/badge/download-latest%20release-E11414)](https://github.com/Kha73k/Bu-D3eij/releases/latest)
